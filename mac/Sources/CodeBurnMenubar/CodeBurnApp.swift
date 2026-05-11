@@ -6,6 +6,7 @@ private let refreshIntervalSeconds: UInt64 = 30
 private let nanosPerSecond: UInt64 = 1_000_000_000
 private let refreshIntervalNanos: UInt64 = refreshIntervalSeconds * nanosPerSecond
 private let forceRefreshWatchdogSeconds: TimeInterval = 90
+private let interactiveQuotaRefreshFloorSeconds: TimeInterval = 30
 private let statusItemWidth: CGFloat = NSStatusItem.variableLength
 private let popoverWidth: CGFloat = 360
 private let popoverHeight: CGFloat = 660
@@ -39,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var forceRefreshTask: Task<Void, Never>?
     private var forceRefreshStartedAt: Date?
     private var forceRefreshGeneration: UInt64 = 0
+    private var manualRefreshTask: Task<Void, Never>?
+    private var manualRefreshGeneration: UInt64 = 0
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Set accessory policy before the app's focus chain forms. On macOS Tahoe
@@ -95,6 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self?.forceRefreshTask = nil
                 self?.forceRefreshStartedAt = nil
                 self?.forceRefreshGeneration &+= 1
+                self?.manualRefreshTask?.cancel()
+                self?.manualRefreshTask = nil
+                self?.manualRefreshGeneration &+= 1
                 self?.store.resetLoadingState()
                 self?.refreshLoopTask?.cancel()
                 self?.refreshLoopTask = nil
@@ -257,7 +263,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         forceRefreshTask = Task {
             async let main: Void = store.refresh(includeOptimize: false, force: true, showLoading: true)
             async let today: Void = store.refreshQuietly(period: .today)
-            _ = await (main, today)
+            async let quotas: Bool = refreshLiveQuotaProgressIfDue()
+            _ = await (main, today, quotas)
             refreshStatusButton()
             await MainActor.run { [weak self] in
                 guard let self, self.forceRefreshGeneration == generation else { return }
@@ -291,6 +298,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     fileprivate var lastSubscriptionRefreshAt: Date?
+    fileprivate var lastCodexRefreshAt: Date?
+
+    @discardableResult
+    private func refreshLiveQuotaProgressIfDue(force: Bool = false) async -> Bool {
+        let cadence = SubscriptionRefreshCadence.current
+        if !force && cadence == .manual { return false }
+
+        let now = Date()
+        let threshold = force ? 0 : TimeInterval(cadence.rawValue)
+        let shouldRefreshClaude = force || now.timeIntervalSince(lastSubscriptionRefreshAt ?? .distantPast) >= threshold
+        let shouldRefreshCodex = force || now.timeIntervalSince(lastCodexRefreshAt ?? .distantPast) >= threshold
+        guard shouldRefreshClaude || shouldRefreshCodex else { return false }
+
+        switch (shouldRefreshClaude, shouldRefreshCodex) {
+        case (true, true):
+            async let claude = store.refreshSubscriptionReportingSuccess()
+            async let codex = store.refreshCodexReportingSuccess()
+            if await claude { lastSubscriptionRefreshAt = Date() }
+            if await codex { lastCodexRefreshAt = Date() }
+        case (true, false):
+            if await store.refreshSubscriptionReportingSuccess() {
+                lastSubscriptionRefreshAt = Date()
+            }
+        case (false, true):
+            if await store.refreshCodexReportingSuccess() {
+                lastCodexRefreshAt = Date()
+            }
+        case (false, false):
+            break
+        }
+        return true
+    }
+
+    private func refreshLiveQuotaProgressForPopoverOpen() {
+        let now = Date()
+        let claudeElapsed = now.timeIntervalSince(lastSubscriptionRefreshAt ?? .distantPast)
+        let codexElapsed = now.timeIntervalSince(lastCodexRefreshAt ?? .distantPast)
+        guard claudeElapsed >= interactiveQuotaRefreshFloorSeconds ||
+              codexElapsed >= interactiveQuotaRefreshFloorSeconds else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.refreshLiveQuotaProgressIfDue(force: true)
+        }
+    }
 
     private func startRefreshLoop() {
         refreshLoopTask?.cancel()
@@ -298,10 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Provider refreshes only run when the user has explicitly connected.
             // Each refresh is a no-op until its corresponding bootstrap flag is set.
             if let self {
-                async let claude = self.store.refreshSubscriptionReportingSuccess()
-                async let codex  = self.store.refreshCodexReportingSuccess()
-                if await claude { self.lastSubscriptionRefreshAt = Date() }
-                if await codex   { self.lastCodexRefreshAt = Date() }
+                await self.refreshLiveQuotaProgressIfDue(force: true)
             }
             while !Task.isCancelled {
                 guard let self else { return }
@@ -327,39 +376,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // (not last attempt) so an intermittent failure doesn't reset
                 // the timer. Each provider has its own anchor so a Codex 429
                 // doesn't delay a due Claude refresh.
-                let cadence = SubscriptionRefreshCadence.current
-                if cadence != .manual {
-                    let claudeElapsed = Date().timeIntervalSince(self.lastSubscriptionRefreshAt ?? .distantPast)
-                    if claudeElapsed >= TimeInterval(cadence.rawValue) {
-                        let succeeded = await self.store.refreshSubscriptionReportingSuccess()
-                        if succeeded { self.lastSubscriptionRefreshAt = Date() }
-                    }
-                    let codexElapsed = Date().timeIntervalSince(self.lastCodexRefreshAt ?? .distantPast)
-                    if codexElapsed >= TimeInterval(cadence.rawValue) {
-                        let succeeded = await self.store.refreshCodexReportingSuccess()
-                        if succeeded { self.lastCodexRefreshAt = Date() }
-                    }
-                }
+                await self.refreshLiveQuotaProgressIfDue()
                 try? await Task.sleep(nanoseconds: refreshIntervalNanos)
             }
         }
     }
 
-    fileprivate var lastCodexRefreshAt: Date?
-
     @MainActor
     func refreshSubscriptionNow() {
-        Task { [weak self] in
+        manualRefreshTask?.cancel()
+        manualRefreshGeneration &+= 1
+        let generation = manualRefreshGeneration
+        forceRefreshTask?.cancel()
+        forceRefreshTask = nil
+        forceRefreshStartedAt = nil
+        forceRefreshGeneration &+= 1
+        pendingRefreshWork?.cancel()
+        pendingRefreshWork = nil
+        refreshLoopTask?.cancel()
+        refreshLoopTask = nil
+        store.resetRefreshState(clearCache: true)
+        lastRefreshTime = .distantPast
+        refreshStatusButton()
+
+        manualRefreshTask = Task { [weak self] in
             guard let self else { return }
             // "Refresh Now" should refresh the menubar payload AND every
-            // connected provider's live quota — the user's intent is "make
+            // connected provider's live quota. The user's intent is "make
             // this match reality right now."
+            let needsTodayTotal = self.store.selectedPeriod != .today || self.store.selectedProvider != .all
             async let payload: Void = self.store.refresh(includeOptimize: false, force: true, showLoading: true)
-            async let claude: Bool = self.store.refreshSubscriptionReportingSuccess()
-            async let codex:  Bool = self.store.refreshCodexReportingSuccess()
+            async let quotas: Bool = self.refreshLiveQuotaProgressIfDue(force: true)
+            if needsTodayTotal {
+                await self.store.refreshQuietly(period: .today)
+            }
             _ = await payload
-            if await claude { self.lastSubscriptionRefreshAt = Date() }
-            if await codex  { self.lastCodexRefreshAt = Date() }
+            guard self.manualRefreshGeneration == generation, !Task.isCancelled else { return }
+            self.lastRefreshTime = Date()
+            self.refreshStatusButton()
+            _ = await quotas
+            guard self.manualRefreshGeneration == generation, !Task.isCancelled else { return }
+            self.manualRefreshTask = nil
+            if self.refreshLoopTask == nil {
+                self.startRefreshLoop()
+            }
         }
     }
 
@@ -557,6 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 window.collectionBehavior.insert(.canJoinAllSpaces)
                 window.makeKeyAndOrderFront(nil)
             }
+            refreshLiveQuotaProgressForPopoverOpen()
         }
     }
 

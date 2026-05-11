@@ -140,6 +140,17 @@ final class AppStore {
         inFlightKeys.removeAll()
     }
 
+    func resetRefreshState(clearCache: Bool = false) {
+        switchTask?.cancel()
+        switchTask = nil
+        resetLoadingState()
+        attemptedKeys.removeAll()
+        lastErrorByKey.removeAll()
+        if clearCache {
+            cache.removeAll()
+        }
+    }
+
     private let loadingWatchdogSeconds: TimeInterval = 60
 
     @discardableResult
