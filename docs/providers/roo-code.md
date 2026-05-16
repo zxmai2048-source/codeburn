@@ -25,10 +25,10 @@ Delegated. Per `<providerName>:<taskId>:<index>` (in `vscode-cline-parser.ts:109
 ## Quirks
 
 - Thin wrapper. Almost every Roo Code bug actually lives in `vscode-cline-parser.ts`.
-- The two providers using the cline parser (KiloCode and Roo Code) differ **only** by extension ID.
+- The VS Code extension wrappers using the Cline-family parser differ **only** by extension ID.
 
 ## When fixing a bug here
 
-1. If the bug also reproduces against KiloCode, fix it in `vscode-cline-parser.ts`.
+1. If the bug also reproduces against Cline or KiloCode, fix it in `vscode-cline-parser.ts`.
 2. If the bug is Roo Code-specific, the difference is upstream JSON shape. Reproduce with a fixture and consider whether the cline parser needs to branch on extension ID.
 3. Read [`vscode-cline-parser.md`](vscode-cline-parser.md) before editing.

@@ -1,26 +1,111 @@
+import AppKit
 import SwiftUI
+
+/// Shared state read by the NSEvent local monitor closure. The closure
+/// snapshots its captured environment at install time, so SwiftUI @State
+/// can't be used directly — a reference-type holder keeps the latest hover
+/// status visible to the monitor across SwiftUI updates.
+@MainActor
+final class AgentTabStripScrollState {
+    static let shared = AgentTabStripScrollState()
+    var isStripHovered: Bool = false
+}
 
 struct AgentTabStrip: View {
     @Environment(AppStore.self) private var store
+    @State private var stripViewportWidth: CGFloat = 0
+    @State private var stripContentWidth: CGFloat = 0
+    @State private var scrollWheelMonitor: Any?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(visibleFilters) { filter in
-                    AgentTab(
-                        filter: filter,
-                        cost: cost(for: filter),
-                        isActive: store.selectedProvider == filter,
-                        quota: store.quotaSummary(for: filter)
-                    ) {
-                        store.switchTo(provider: filter)
+        GeometryReader { viewportGeo in
+            ScrollViewReader { proxy in
+                HStack(spacing: 4) {
+                    if isOverflowing {
+                        Button {
+                            selectAdjacentProvider(direction: -1, proxy: proxy)
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 10, weight: .semibold))
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(canMoveBackward ? Color.primary : Color.secondary.opacity(0.35))
+                        .disabled(!canMoveBackward)
+                        .help("Show previous providers")
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            ForEach(visibleFilters) { filter in
+                                AgentTab(
+                                    filter: filter,
+                                    cost: cost(for: filter),
+                                    isActive: store.selectedProvider == filter,
+                                    quota: store.quotaSummary(for: filter)
+                                ) {
+                                    store.switchTo(provider: filter)
+                                    withAnimation(.easeInOut(duration: 0.18)) {
+                                        proxy.scrollTo(filter.id, anchor: .center)
+                                    }
+                                }
+                                .id(filter.id)
+                            }
+                        }
+                        .background(
+                            GeometryReader { contentGeo in
+                                Color.clear
+                                    .onAppear {
+                                        stripContentWidth = contentGeo.size.width
+                                    }
+                                    .onChange(of: contentGeo.size.width) { _, newWidth in
+                                        stripContentWidth = newWidth
+                                    }
+                            }
+                        )
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                    .onHover { hovering in
+                        AgentTabStripScrollState.shared.isStripHovered = hovering
+                    }
+
+                    if isOverflowing {
+                        Button {
+                            selectAdjacentProvider(direction: 1, proxy: proxy)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(canMoveForward ? Color.primary : Color.secondary.opacity(0.35))
+                        .disabled(!canMoveForward)
+                        .help("Show next providers")
                     }
                 }
+                .onAppear {
+                    stripViewportWidth = viewportGeo.size.width
+                    installScrollWheelMonitorIfNeeded()
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo(store.selectedProvider.id, anchor: .center)
+                    }
+                }
+                .onChange(of: viewportGeo.size.width) { _, newWidth in
+                    stripViewportWidth = newWidth
+                }
+                .onChange(of: store.selectedProvider) { _, newProvider in
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo(newProvider.id, anchor: .center)
+                    }
+                }
+                .onDisappear {
+                    removeScrollWheelMonitorIfNeeded()
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
         }
+        .frame(height: 38)
     }
 
     private var todayAll: MenubarPayload {
@@ -53,6 +138,60 @@ struct AgentTabStrip: View {
         )
         return filter.providerKeys.reduce(0.0) { sum, key in
             sum + (providers[key] ?? 0)
+        }
+    }
+
+    private var currentFilterIndex: Int {
+        visibleFilters.firstIndex(of: store.selectedProvider) ?? 0
+    }
+
+    private var canMoveBackward: Bool { currentFilterIndex > 0 }
+    private var canMoveForward: Bool { currentFilterIndex < visibleFilters.count - 1 }
+    private var isOverflowing: Bool { stripContentWidth > (stripViewportWidth - 30) }
+
+    private func selectAdjacentProvider(direction: Int, proxy: ScrollViewProxy) {
+        guard !visibleFilters.isEmpty else { return }
+        let targetIndex = min(max(currentFilterIndex + direction, 0), visibleFilters.count - 1)
+        let target = visibleFilters[targetIndex]
+        store.switchTo(provider: target)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            proxy.scrollTo(target.id, anchor: .center)
+        }
+    }
+
+    /// Standard mouse wheels emit vertical-only scroll deltas, which a horizontal
+    /// `ScrollView` ignores. While the cursor is over the strip we transpose
+    /// vertical-axis scroll fields onto the horizontal axis so the underlying
+    /// NSScrollView receives a real horizontal delta. Trackpad events (precise
+    /// deltas, with native horizontal component) are passed through untouched
+    /// so vertical scrolling elsewhere in the popover is unaffected.
+    private func installScrollWheelMonitorIfNeeded() {
+        guard scrollWheelMonitor == nil else { return }
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard AgentTabStripScrollState.shared.isStripHovered,
+                  !event.hasPreciseScrollingDeltas,
+                  abs(event.scrollingDeltaX) < 0.001,
+                  abs(event.scrollingDeltaY) > 0,
+                  let cg = event.cgEvent?.copy() else {
+                return event
+            }
+            let lineDeltaY = cg.getIntegerValueField(.scrollWheelEventDeltaAxis1)
+            let pointDeltaY = cg.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+            let fixedDeltaY = cg.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
+            cg.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: 0)
+            cg.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: 0)
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: 0)
+            cg.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: lineDeltaY)
+            cg.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: pointDeltaY)
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: fixedDeltaY)
+            return NSEvent(cgEvent: cg) ?? event
+        }
+    }
+
+    private func removeScrollWheelMonitorIfNeeded() {
+        if let monitor = scrollWheelMonitor {
+            NSEvent.removeMonitor(monitor)
+            scrollWheelMonitor = nil
         }
     }
 }
@@ -340,13 +479,17 @@ extension ProviderFilter {
         switch self {
         case .all: return Theme.brandAccent
         case .claude: return Theme.categoricalClaude
+        case .cline: return Color(red: 0x23/255.0, green: 0x8A/255.0, blue: 0x7E/255.0)
         case .codex: return Theme.categoricalCodex
         case .cursor: return Theme.categoricalCursor
+        case .cursorAgent: return Color(red: 0x4E/255.0, green: 0xC9/255.0, blue: 0xB0/255.0)
         case .copilot: return Color(red: 0x6D/255.0, green: 0x8F/255.0, blue: 0xA6/255.0)
         case .droid: return Color(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0)
         case .gemini: return Color(red: 0x44/255.0, green: 0x85/255.0, blue: 0xF4/255.0)
+        case .ibmBob: return Color(red: 0x0F/255.0, green: 0x62/255.0, blue: 0xFE/255.0)
         case .kiloCode: return Color(red: 0x00/255.0, green: 0x96/255.0, blue: 0x88/255.0)
         case .kiro: return Color(red: 0x4A/255.0, green: 0x9E/255.0, blue: 0xC4/255.0)
+        case .kimi: return Color(red: 0xA4/255.0, green: 0xC6/255.0, blue: 0x39/255.0)
         case .openclaw: return Color(red: 0xDA/255.0, green: 0x70/255.0, blue: 0x56/255.0)
         case .opencode: return Color(red: 0x5B/255.0, green: 0x83/255.0, blue: 0x5B/255.0)
         case .pi: return Color(red: 0xB2/255.0, green: 0x6B/255.0, blue: 0x3D/255.0)
@@ -354,6 +497,8 @@ extension ProviderFilter {
         case .omp: return Color(red: 0x8B/255.0, green: 0x5C/255.0, blue: 0xB0/255.0)
         case .rooCode: return Color(red: 0x4C/255.0, green: 0xAF/255.0, blue: 0x50/255.0)
         case .crush: return Color(red: 0xE0/255.0, green: 0x6C/255.0, blue: 0x9F/255.0)
+        case .antigravity: return Color(red: 0xFF/255.0, green: 0x7A/255.0, blue: 0x45/255.0)
+        case .goose: return Color(red: 0xB7/255.0, green: 0x8D/255.0, blue: 0x52/255.0)
         }
     }
 }

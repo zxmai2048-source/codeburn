@@ -3,9 +3,11 @@ import AppKit
 import Observation
 
 private let refreshIntervalSeconds: UInt64 = 30
-private let nanosPerSecond: UInt64 = 1_000_000_000
-private let refreshIntervalNanos: UInt64 = refreshIntervalSeconds * nanosPerSecond
 private let forceRefreshWatchdogSeconds: TimeInterval = 90
+private let refreshLoopWatchdogSeconds: TimeInterval = 90
+private let statusPayloadRefreshWatchdogSeconds: TimeInterval = 60
+private let refreshRateLimitSeconds: TimeInterval = 5
+private let interactiveQuotaRefreshFloorSeconds: TimeInterval = 30
 private let statusItemWidth: CGFloat = NSStatusItem.variableLength
 private let popoverWidth: CGFloat = 360
 private let popoverHeight: CGFloat = 660
@@ -35,10 +37,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Held for the lifetime of the app to opt out of App Nap and Automatic Termination.
     private var backgroundActivity: NSObjectProtocol?
     private var pendingRefreshWork: DispatchWorkItem?
-    private var refreshLoopTask: Task<Void, Never>?
+    private var refreshTimer: DispatchSourceTimer?
     private var forceRefreshTask: Task<Void, Never>?
     private var forceRefreshStartedAt: Date?
     private var forceRefreshGeneration: UInt64 = 0
+    private var statusPayloadRefreshTask: Task<Void, Never>?
+    private var statusPayloadRefreshStartedAt: Date?
+    private var statusPayloadRefreshGeneration: UInt64 = 0
+    private var manualRefreshTask: Task<Void, Never>?
+    private var manualRefreshGeneration: UInt64 = 0
+    private var claudeQuotaRefreshTask: Task<Bool, Never>?
+    private var codexQuotaRefreshTask: Task<Bool, Never>?
+    private var refreshLoopHeartbeatAt: Date = .distantPast
+    private var lastLaunchAgentHeartbeatAt: Date = .distantPast
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Set accessory policy before the app's focus chain forms. On macOS Tahoe
@@ -91,28 +102,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.forceRefreshTask?.cancel()
-                self?.forceRefreshTask = nil
-                self?.forceRefreshStartedAt = nil
-                self?.forceRefreshGeneration &+= 1
-                self?.refreshLoopTask?.cancel()
-                self?.refreshLoopTask = nil
+                self?.prepareRefreshPipelineForSleep()
             }
         }
 
         // didWakeNotification + screensDidWakeNotification can both fire on
-        // the same wake. forceRefresh has a 5-second rate-limit gate so the
-        // duplicate is squashed there. Restart the refresh loop too, since
-        // we cancelled it on willSleep.
+        // the same wake. forceRefreshTask squashes overlap; both notifications
+        // still bypass the short manual-click rate limit so a just-before-sleep
+        // refresh cannot block wake recovery.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.store.resetLoadingState()
-                self?.forceRefresh()
-                if self?.refreshLoopTask == nil { self?.startRefreshLoop() }
+                self?.recoverRefreshPipelineAfterInterruption(resetLoading: true, reason: "wake")
             }
         }
 
@@ -121,7 +125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.forceRefresh() }
+            Task { @MainActor in
+                self?.recoverRefreshPipelineAfterInterruption(resetLoading: true, reason: "screen wake")
+            }
         }
     }
 
@@ -131,7 +137,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.forceRefresh() }
+            Task { @MainActor in
+                self?.handleLaunchAgentHeartbeat()
+            }
+        }
+    }
+
+    private func handleLaunchAgentHeartbeat() {
+        let now = Date()
+        guard now.timeIntervalSince(lastLaunchAgentHeartbeatAt) >= refreshRateLimitSeconds else { return }
+        lastLaunchAgentHeartbeatAt = now
+        let loopAge = now.timeIntervalSince(refreshLoopHeartbeatAt)
+        guard refreshTimer == nil || loopAge > refreshLoopWatchdogSeconds else {
+            _ = store.clearStaleLoadingIfNeeded()
+            _ = clearStaleForceRefreshIfNeeded(now: now)
+            _ = clearStaleStatusPayloadRefreshIfNeeded(now: now)
+            return
+        }
+        if refreshTimer != nil {
+            NSLog("CodeBurn: refresh loop stale for %ds after launch agent - restarting", Int(loopAge))
+        }
+        startRefreshLoop(forceQuotaOnStart: false)
+    }
+
+    private func prepareRefreshPipelineForSleep() {
+        forceRefreshTask?.cancel()
+        forceRefreshTask = nil
+        forceRefreshStartedAt = nil
+        forceRefreshGeneration &+= 1
+        manualRefreshTask?.cancel()
+        manualRefreshTask = nil
+        manualRefreshGeneration &+= 1
+        statusPayloadRefreshTask?.cancel()
+        statusPayloadRefreshTask = nil
+        statusPayloadRefreshStartedAt = nil
+        statusPayloadRefreshGeneration &+= 1
+        store.resetLoadingState()
+        stopRefreshTimer()
+        refreshLoopHeartbeatAt = .distantPast
+        lastRefreshTime = .distantPast
+    }
+
+    private func recoverRefreshPipelineAfterInterruption(resetLoading: Bool, clearCache: Bool = false, reason: String) {
+        if resetLoading {
+            forceRefreshTask?.cancel()
+            forceRefreshTask = nil
+            forceRefreshStartedAt = nil
+            forceRefreshGeneration &+= 1
+            manualRefreshTask?.cancel()
+            manualRefreshTask = nil
+            manualRefreshGeneration &+= 1
+            statusPayloadRefreshTask?.cancel()
+            statusPayloadRefreshTask = nil
+            statusPayloadRefreshStartedAt = nil
+            statusPayloadRefreshGeneration &+= 1
+            store.resetRefreshState(clearCache: clearCache)
+        } else {
+            _ = store.clearStaleLoadingIfNeeded()
+        }
+        let now = Date()
+        let loopAge = now.timeIntervalSince(refreshLoopHeartbeatAt)
+        if refreshTimer == nil || loopAge > refreshLoopWatchdogSeconds {
+            if refreshTimer != nil {
+                NSLog("CodeBurn: refresh loop stale for %ds after %@ - restarting", Int(loopAge), reason)
+            }
+            startRefreshLoop(forceQuotaOnStart: false)
+        } else {
+            runRefreshLoopTick(reason: reason, forcePayload: true, forceQuota: false)
         }
     }
 
@@ -192,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard !UserDefaults.standard.bool(forKey: key) else { return }
 
         let appPath = Bundle.main.bundlePath
-        let script = "tell application \"System Events\" to make login item at end with properties {path:\"\(appPath)\", hidden:false}"
+        let script = "tell application \"System Events\" to make login item at end with properties {path:\(appleScriptStringLiteral(appPath)), hidden:false}"
 
         let process = Process()
         process.launchPath = "/usr/bin/osascript"
@@ -211,14 +283,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private func appleScriptStringLiteral(_ value: String) -> String {
+        var escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "\"", with: "\\\"")
+        escaped = escaped.replacingOccurrences(of: "\r", with: "")
+        escaped = escaped.replacingOccurrences(of: "\n", with: "")
+        return "\"\(escaped)\""
+    }
+
     private var lastRefreshTime: Date = .distantPast
 
     @discardableResult
     private func clearStaleForceRefreshIfNeeded(now: Date = Date()) -> Bool {
-        if let started = forceRefreshStartedAt, forceRefreshTask != nil {
+        if forceRefreshTask != nil {
+            guard let started = forceRefreshStartedAt else {
+                NSLog("CodeBurn: force refresh task had no start timestamp - clearing")
+                forceRefreshTask?.cancel()
+                forceRefreshTask = nil
+                forceRefreshGeneration &+= 1
+                store.resetLoadingState()
+                return true
+            }
             let elapsed = now.timeIntervalSince(started)
             guard elapsed > forceRefreshWatchdogSeconds else { return false }
-            NSLog("CodeBurn: force refresh stuck for %ds — cancelling and restarting", Int(elapsed))
+            NSLog("CodeBurn: force refresh stuck for %ds - cancelling and restarting", Int(elapsed))
             forceRefreshTask?.cancel()
             forceRefreshTask = nil
             forceRefreshStartedAt = nil
@@ -229,10 +317,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return false
     }
 
-    private func forceRefresh() {
+    @discardableResult
+    private func clearStaleStatusPayloadRefreshIfNeeded(now: Date = Date()) -> Bool {
+        if statusPayloadRefreshTask != nil {
+            guard let started = statusPayloadRefreshStartedAt else {
+                NSLog("CodeBurn: today status refresh task had no start timestamp - clearing")
+                statusPayloadRefreshTask?.cancel()
+                statusPayloadRefreshTask = nil
+                statusPayloadRefreshGeneration &+= 1
+                return true
+            }
+            let elapsed = now.timeIntervalSince(started)
+            guard elapsed > statusPayloadRefreshWatchdogSeconds else { return false }
+            NSLog("CodeBurn: today status refresh stuck for %ds - cancelling", Int(elapsed))
+            statusPayloadRefreshTask?.cancel()
+            statusPayloadRefreshTask = nil
+            statusPayloadRefreshStartedAt = nil
+            statusPayloadRefreshGeneration &+= 1
+            return true
+        }
+        return false
+    }
+
+    private func refreshTodayStatusPayloadIfNeeded(reason: String, force: Bool = false) {
+        let now = Date()
+        _ = clearStaleStatusPayloadRefreshIfNeeded(now: now)
+        guard statusPayloadRefreshTask == nil else { return }
+        guard force || store.needsStatusPayloadRefresh else { return }
+
+        if let age = store.todayPayloadAgeSeconds, age > 120 {
+            NSLog("CodeBurn: today status payload stale for %ds on %@ refresh", age, reason)
+        }
+
+        statusPayloadRefreshStartedAt = now
+        statusPayloadRefreshGeneration &+= 1
+        let generation = statusPayloadRefreshGeneration
+        statusPayloadRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            await self.store.refreshQuietly(period: .today, force: true)
+            self.refreshStatusButton()
+            guard self.statusPayloadRefreshGeneration == generation, !Task.isCancelled else { return }
+            self.statusPayloadRefreshTask = nil
+            self.statusPayloadRefreshStartedAt = nil
+        }
+    }
+
+    private func forceRefresh(bypassRateLimit: Bool = false, forceQuota: Bool = false) {
         let now = Date()
         _ = clearStaleForceRefreshIfNeeded(now: now)
-        guard now.timeIntervalSince(lastRefreshTime) > 5 else { return }
+        if forceRefreshTask != nil {
+            refreshTodayStatusPayloadIfNeeded(reason: "blocked force refresh")
+        }
+        guard forceRefreshTask == nil else { return }
+        if !bypassRateLimit {
+            guard now.timeIntervalSince(lastRefreshTime) > refreshRateLimitSeconds else { return }
+        }
         lastRefreshTime = now
         forceRefreshStartedAt = now
         forceRefreshGeneration &+= 1
@@ -240,8 +379,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         forceRefreshTask = Task {
             async let main: Void = store.refresh(includeOptimize: false, force: true, showLoading: true)
-            async let today: Void = store.refreshQuietly(period: .today)
-            _ = await (main, today)
+            async let quotas: Bool = refreshLiveQuotaProgressIfDue(force: forceQuota)
+            if store.selectedPeriod != .today || store.selectedProvider != .all {
+                await store.refreshQuietly(period: .today)
+            }
+            _ = await main
             refreshStatusButton()
             await MainActor.run { [weak self] in
                 guard let self, self.forceRefreshGeneration == generation else { return }
@@ -249,6 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.forceRefreshStartedAt = nil
                 self.lastRefreshTime = Date()
             }
+            _ = await quotas
         }
     }
 
@@ -275,75 +418,184 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     fileprivate var lastSubscriptionRefreshAt: Date?
+    fileprivate var lastCodexRefreshAt: Date?
 
-    private func startRefreshLoop() {
-        refreshLoopTask?.cancel()
-        refreshLoopTask = Task { [weak self] in
-            // Provider refreshes only run when the user has explicitly connected.
-            // Each refresh is a no-op until its corresponding bootstrap flag is set.
-            if let self {
-                async let claude = self.store.refreshSubscriptionReportingSuccess()
-                async let codex  = self.store.refreshCodexReportingSuccess()
-                if await claude { self.lastSubscriptionRefreshAt = Date() }
-                if await codex   { self.lastCodexRefreshAt = Date() }
+    @discardableResult
+    private func refreshLiveQuotaProgressIfDue(force: Bool = false) async -> Bool {
+        let cadence = SubscriptionRefreshCadence.current
+        if !force && cadence == .manual { return false }
+
+        let now = Date()
+        let threshold = force ? 0 : TimeInterval(cadence.rawValue)
+        let shouldRefreshClaude = force || now.timeIntervalSince(lastSubscriptionRefreshAt ?? .distantPast) >= threshold
+        let shouldRefreshCodex = force || now.timeIntervalSince(lastCodexRefreshAt ?? .distantPast) >= threshold
+        guard shouldRefreshClaude || shouldRefreshCodex else { return false }
+
+        switch (shouldRefreshClaude, shouldRefreshCodex) {
+        case (true, true):
+            async let claude = refreshClaudeQuotaSingleFlight()
+            async let codex = refreshCodexQuotaSingleFlight()
+            if await claude { lastSubscriptionRefreshAt = Date() }
+            if await codex { lastCodexRefreshAt = Date() }
+        case (true, false):
+            if await refreshClaudeQuotaSingleFlight() {
+                lastSubscriptionRefreshAt = Date()
             }
-            while !Task.isCancelled {
-                guard let self else { return }
-                let clearedStaleForceRefresh = self.clearStaleForceRefreshIfNeeded()
-                let clearedStaleLoading = self.store.clearStaleLoadingIfNeeded()
-                // Skip the loop's tick if a wake / manual / distributed-
-                // notification refresh just ran. Without this gate, every
-                // wake produced two refreshes (forceRefresh from the wake
-                // observer plus the loop's natural tick).
-                let sinceLast = Date().timeIntervalSince(self.lastRefreshTime)
-                if self.forceRefreshTask == nil && (clearedStaleForceRefresh || clearedStaleLoading || sinceLast >= 5) {
-                    if self.store.selectedPeriod != .today || self.store.selectedProvider != .all {
-                        async let quiet: Void = self.store.refreshQuietly(period: .today)
-                        async let main: Void = self.store.refresh(includeOptimize: false, force: true)
-                        _ = await (quiet, main)
-                    } else {
-                        await self.store.refresh(includeOptimize: false, force: true)
-                    }
-                    self.lastRefreshTime = Date()
-                    self.refreshStatusButton()
-                }
-                // Cadence-driven live-quota refresh, anchored on LAST SUCCESS
-                // (not last attempt) so an intermittent failure doesn't reset
-                // the timer. Each provider has its own anchor so a Codex 429
-                // doesn't delay a due Claude refresh.
-                let cadence = SubscriptionRefreshCadence.current
-                if cadence != .manual {
-                    let claudeElapsed = Date().timeIntervalSince(self.lastSubscriptionRefreshAt ?? .distantPast)
-                    if claudeElapsed >= TimeInterval(cadence.rawValue) {
-                        let succeeded = await self.store.refreshSubscriptionReportingSuccess()
-                        if succeeded { self.lastSubscriptionRefreshAt = Date() }
-                    }
-                    let codexElapsed = Date().timeIntervalSince(self.lastCodexRefreshAt ?? .distantPast)
-                    if codexElapsed >= TimeInterval(cadence.rawValue) {
-                        let succeeded = await self.store.refreshCodexReportingSuccess()
-                        if succeeded { self.lastCodexRefreshAt = Date() }
-                    }
-                }
-                try? await Task.sleep(nanoseconds: refreshIntervalNanos)
+        case (false, true):
+            if await refreshCodexQuotaSingleFlight() {
+                lastCodexRefreshAt = Date()
             }
+        case (false, false):
+            break
+        }
+        return true
+    }
+
+    private func refreshClaudeQuotaSingleFlight() async -> Bool {
+        if let task = claudeQuotaRefreshTask {
+            return await task.value
+        }
+        let task = Task { [store] in
+            await store.refreshSubscriptionReportingSuccess()
+        }
+        claudeQuotaRefreshTask = task
+        let result = await task.value
+        if claudeQuotaRefreshTask != nil {
+            claudeQuotaRefreshTask = nil
+        }
+        return result
+    }
+
+    private func refreshCodexQuotaSingleFlight() async -> Bool {
+        if let task = codexQuotaRefreshTask {
+            return await task.value
+        }
+        let task = Task { [store] in
+            await store.refreshCodexReportingSuccess()
+        }
+        codexQuotaRefreshTask = task
+        let result = await task.value
+        if codexQuotaRefreshTask != nil {
+            codexQuotaRefreshTask = nil
+        }
+        return result
+    }
+
+    private func refreshLiveQuotaProgressForPopoverOpen() {
+        let now = Date()
+        let claudeElapsed = now.timeIntervalSince(lastSubscriptionRefreshAt ?? .distantPast)
+        let codexElapsed = now.timeIntervalSince(lastCodexRefreshAt ?? .distantPast)
+        guard claudeElapsed >= interactiveQuotaRefreshFloorSeconds ||
+              codexElapsed >= interactiveQuotaRefreshFloorSeconds else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.refreshLiveQuotaProgressIfDue(force: true)
         }
     }
 
-    fileprivate var lastCodexRefreshAt: Date?
+    private func refreshPayloadForPopoverOpen() {
+        guard store.needsInteractivePayloadRefresh else { return }
+        let shouldResetPipeline = store.shouldResetInteractiveRefreshPipeline
+        if shouldResetPipeline, let age = store.staleInteractivePayloadAgeSeconds {
+            NSLog("CodeBurn: popover opened with %ds stale payload cache - resetting refresh pipeline", age)
+        }
+        recoverRefreshPipelineAfterInterruption(
+            resetLoading: shouldResetPipeline,
+            reason: "popover open"
+        )
+    }
+
+    private func stopRefreshTimer() {
+        refreshTimer?.setEventHandler {}
+        refreshTimer?.cancel()
+        refreshTimer = nil
+    }
+
+    private func runRefreshLoopTick(reason: String, forcePayload: Bool = false, forceQuota: Bool = false) {
+        refreshLoopHeartbeatAt = Date()
+        let hadForceRefreshInFlight = forceRefreshTask != nil
+        let clearedStaleForceRefresh = clearStaleForceRefreshIfNeeded()
+        let clearedStaleStatusRefresh = clearStaleStatusPayloadRefreshIfNeeded()
+        let clearedStaleLoading = store.clearStaleLoadingIfNeeded()
+        let statusPayloadStale = store.needsStatusPayloadRefresh
+        let sinceLast = Date().timeIntervalSince(lastRefreshTime)
+        let shouldForceRefresh = forcePayload ||
+            clearedStaleForceRefresh ||
+            clearedStaleLoading ||
+            sinceLast >= TimeInterval(refreshIntervalSeconds)
+
+        if shouldForceRefresh {
+            forceRefresh(bypassRateLimit: true, forceQuota: forceQuota)
+        }
+
+        let forceRefreshWasBlocked = hadForceRefreshInFlight && forceRefreshTask != nil
+        if statusPayloadStale && (!shouldForceRefresh || forceRefreshWasBlocked || clearedStaleStatusRefresh) {
+            refreshTodayStatusPayloadIfNeeded(reason: reason, force: forcePayload)
+        }
+    }
+
+    private func startRefreshLoop(forceQuotaOnStart: Bool = false) {
+        stopRefreshTimer()
+        runRefreshLoopTick(reason: "start", forcePayload: true, forceQuota: forceQuotaOnStart)
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(
+            deadline: .now() + .seconds(Int(refreshIntervalSeconds)),
+            repeating: .seconds(Int(refreshIntervalSeconds)),
+            leeway: .seconds(2)
+        )
+        timer.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.runRefreshLoopTick(reason: "timer")
+            }
+        }
+        refreshTimer = timer
+        refreshLoopHeartbeatAt = Date()
+        timer.resume()
+    }
 
     @MainActor
     func refreshSubscriptionNow() {
-        Task { [weak self] in
+        manualRefreshTask?.cancel()
+        manualRefreshGeneration &+= 1
+        let generation = manualRefreshGeneration
+        forceRefreshTask?.cancel()
+        forceRefreshTask = nil
+        forceRefreshStartedAt = nil
+        forceRefreshGeneration &+= 1
+        statusPayloadRefreshTask?.cancel()
+        statusPayloadRefreshTask = nil
+        statusPayloadRefreshStartedAt = nil
+        statusPayloadRefreshGeneration &+= 1
+        pendingRefreshWork?.cancel()
+        pendingRefreshWork = nil
+        stopRefreshTimer()
+        store.resetRefreshState(clearCache: true)
+        lastRefreshTime = .distantPast
+        refreshStatusButton()
+
+        manualRefreshTask = Task { [weak self] in
             guard let self else { return }
             // "Refresh Now" should refresh the menubar payload AND every
-            // connected provider's live quota — the user's intent is "make
+            // connected provider's live quota. The user's intent is "make
             // this match reality right now."
+            let needsTodayTotal = self.store.selectedPeriod != .today || self.store.selectedProvider != .all
             async let payload: Void = self.store.refresh(includeOptimize: false, force: true, showLoading: true)
-            async let claude: Bool = self.store.refreshSubscriptionReportingSuccess()
-            async let codex:  Bool = self.store.refreshCodexReportingSuccess()
+            async let quotas: Bool = self.refreshLiveQuotaProgressIfDue(force: true)
+            if needsTodayTotal {
+                await self.store.refreshQuietly(period: .today, force: true)
+            }
             _ = await payload
-            if await claude { self.lastSubscriptionRefreshAt = Date() }
-            if await codex  { self.lastCodexRefreshAt = Date() }
+            guard self.manualRefreshGeneration == generation, !Task.isCancelled else { return }
+            self.lastRefreshTime = Date()
+            self.refreshStatusButton()
+            _ = await quotas
+            guard self.manualRefreshGeneration == generation, !Task.isCancelled else { return }
+            self.manualRefreshTask = nil
+            if self.refreshTimer == nil {
+                self.startRefreshLoop()
+            }
         }
     }
 
@@ -541,6 +793,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 window.collectionBehavior.insert(.canJoinAllSpaces)
                 window.makeKeyAndOrderFront(nil)
             }
+            refreshPayloadForPopoverOpen()
+            refreshLiveQuotaProgressForPopoverOpen()
         }
     }
 
@@ -626,14 +880,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             await updateChecker.check()
             let alert = NSAlert()
             alert.icon = codeburnAlertIcon()
-            if updateChecker.updateAvailable, let latest = updateChecker.latestVersion {
+            if let error = updateChecker.updateError {
+                alert.messageText = "Update Check Failed"
+                alert.informativeText = error
+                alert.alertStyle = .warning
+            } else if updateChecker.updateAvailable, let latest = updateChecker.latestVersion {
                 alert.messageText = "Update Available"
-                alert.informativeText = "v\(latest) is available (you have v\(updateChecker.currentVersion)). Run:\n\ncodeburn menubar --force"
+                alert.informativeText = "\(AppVersion.display(latest)) is available (you have \(AppVersion.display(updateChecker.currentVersion))). Run:\n\ncodeburn menubar --force"
+                alert.alertStyle = .informational
             } else {
                 alert.messageText = "Up to Date"
-                alert.informativeText = "You're on the latest version (v\(updateChecker.currentVersion))."
+                alert.informativeText = "You're on the latest version (\(AppVersion.display(updateChecker.currentVersion)))."
+                alert.alertStyle = .informational
             }
-            alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
             alert.runModal()
         }

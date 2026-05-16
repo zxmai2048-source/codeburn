@@ -174,8 +174,7 @@ export async function getPlanUsage(plan: Plan, today = new Date()): Promise<Plan
     start: periodStart,
     end: today,
   }
-  const provider = plan.provider === 'all' ? 'all' : plan.provider
-  const projects = await parseAllSessions(range, provider)
+  const projects = await parseAllSessions(range, plan.provider)
   return getPlanUsageFromProjects(plan, projects, today)
 }
 
@@ -201,7 +200,7 @@ export async function getPlanUsages(today = new Date()): Promise<PlanUsage[]> {
 
   if (plans.length === 1) {
     const plan = plans[0]!
-    const projects = await parseAllSessions(range, plan.provider === 'all' ? 'all' : plan.provider)
+    const projects = await parseAllSessions(range, plan.provider)
     return [getPlanUsageFromProjects(plan, projects, today)]
   }
 

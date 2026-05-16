@@ -6,6 +6,7 @@ import { homedir } from 'os'
 
 import { readSessionLines, readSessionFileSync } from './fs-utils.js'
 import { discoverAllSessions } from './providers/index.js'
+import { parseJsonlLine, shouldSkipLine } from './parser.js'
 import type { DateRange, ProjectSummary } from './types.js'
 import { formatCost } from './currency.js'
 import { formatTokens } from './format.js'
@@ -141,6 +142,8 @@ const SHELL_PROFILES = ['.zshrc', '.bashrc', '.bash_profile', '.profile']
 const TOP_ITEMS_PREVIEW = 3
 const GHOST_NAMES_PREVIEW = 5
 const GHOST_CLEANUP_COMMANDS_LIMIT = 10
+const OPTIMIZE_TEXT_CAP = 2000
+const OPTIMIZE_FIELD_CAP = 500
 
 // ============================================================================
 // Types
@@ -209,7 +212,33 @@ type ScanData = {
 // JSONL scanner
 // ============================================================================
 
-const FILE_READ_CONCURRENCY = 16
+function cappedString(value: unknown, cap = OPTIMIZE_FIELD_CAP): string | undefined {
+  return typeof value === 'string' ? value.slice(0, cap) : undefined
+}
+
+function compactOptimizeInput(name: string, input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== 'object') return {}
+  const raw = input as Record<string, unknown>
+  if (isReadTool(name)) {
+    const filePath = cappedString(raw['file_path'], OPTIMIZE_TEXT_CAP)
+    return filePath ? { file_path: filePath } : {}
+  }
+  if (name === 'Agent' || name === 'Task') {
+    const subagentType = cappedString(raw['subagent_type'])
+    return subagentType ? { subagent_type: subagentType } : {}
+  }
+  if (name === 'Skill') {
+    const skill = cappedString(raw['skill'])
+    const skillName = cappedString(raw['name'])
+    return {
+      ...(skill ? { skill } : {}),
+      ...(skillName ? { name: skillName } : {}),
+    }
+  }
+  return {}
+}
+
+const FILE_READ_CONCURRENCY = 4
 const RESULT_CACHE_TTL_MS = 60_000
 const RECENT_WINDOW_HOURS = 48
 const RECENT_WINDOW_MS = RECENT_WINDOW_HOURS * 60 * 60 * 1000
@@ -286,10 +315,19 @@ export async function scanJsonlFile(
   const sessionId = basename(filePath, '.jsonl')
   let lastVersion = ''
 
-  for await (const line of readSessionLines(filePath)) {
-    if (!line.trim()) continue
-    let entry: Record<string, unknown>
-    try { entry = JSON.parse(line) } catch { continue }
+  const skipThreshold = dateRange
+    ? new Date(dateRange.start.getTime() - 86_400_000).toISOString()
+    : null
+  const skipFn = dateRange
+    ? (head: string) => shouldSkipLine(head, skipThreshold!)
+    : undefined
+  const lines = readSessionLines(filePath, skipFn, { largeLineAsBuffer: true })
+  for await (const line of lines) {
+    if (typeof line === 'string' && !line.trim()) continue
+    if (Buffer.isBuffer(line) && line.length === 0) continue
+    const parsed = parseJsonlLine(line)
+    if (!parsed) continue
+    const entry = parsed as Record<string, unknown>
 
     if (entry.version && typeof entry.version === 'string') lastVersion = entry.version
 
@@ -304,11 +342,15 @@ export async function scanJsonlFile(
       const msg = entry.message as Record<string, unknown> | undefined
       const msgContent = msg?.content
       if (typeof msgContent === 'string') {
-        userMessages.push(msgContent)
+        userMessages.push(msgContent.slice(0, OPTIMIZE_TEXT_CAP))
       } else if (Array.isArray(msgContent)) {
+        let remaining = OPTIMIZE_TEXT_CAP
         for (const block of msgContent) {
+          if (remaining <= 0) break
           if (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
-            userMessages.push(block.text)
+            const text = block.text.slice(0, remaining)
+            userMessages.push(text)
+            remaining -= text.length
           }
         }
       }
@@ -330,9 +372,10 @@ export async function scanJsonlFile(
 
     for (const block of blocks) {
       if (block.type !== 'tool_use') continue
+      const name = typeof block.name === 'string' ? block.name : ''
       calls.push({
-        name: block.name as string,
-        input: (block.input as Record<string, unknown>) ?? {},
+        name,
+        input: compactOptimizeInput(name, block.input),
         sessionId,
         project,
         recent,

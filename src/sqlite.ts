@@ -16,6 +16,7 @@ export type SqliteDatabase = {
 
 type DatabaseSyncCtor = new (path: string, options?: { readOnly?: boolean }) => {
   prepare(sql: string): { all(...params: unknown[]): Row[] }
+  exec?(sql: string): void
   close(): void
 }
 
@@ -97,12 +98,35 @@ export function getSqliteLoadError(): string {
   return loadError ?? 'SQLite driver not available'
 }
 
+export function isSqliteBusyError(err: unknown): boolean {
+  const e = err as { code?: unknown; errcode?: unknown; errstr?: unknown; message?: unknown } | null
+  const code = typeof e?.code === 'string' ? e.code : ''
+  const errcode = typeof e?.errcode === 'number' ? e.errcode : null
+  const message = [
+    typeof e?.message === 'string' ? e.message : '',
+    typeof e?.errstr === 'string' ? e.errstr : '',
+  ].join(' ')
+
+  return (
+    errcode === 5 ||
+    errcode === 6 ||
+    code === 'SQLITE_BUSY' ||
+    code === 'SQLITE_LOCKED' ||
+    /\bSQLITE_(BUSY|LOCKED)\b|database (?:is |table is )?locked/i.test(message)
+  )
+}
+
 export function openDatabase(path: string): SqliteDatabase {
   if (!loadDriver() || DatabaseSync === null) {
     throw new Error(getSqliteLoadError())
   }
 
   const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    db.exec?.('PRAGMA busy_timeout = 1000')
+  } catch {
+    // Best effort. Some Node sqlite builds may not expose exec on DatabaseSync.
+  }
 
   return {
     query<T extends Row = Row>(sql: string, params: unknown[] = []): T[] {

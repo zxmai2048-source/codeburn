@@ -325,7 +325,7 @@ describe('scanJsonlFile', () => {
       message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }] },
     }))
     await scanJsonlFile(filePath, 'p1', undefined)
-    expect(readSessionLinesSpy).toHaveBeenCalledWith(filePath)
+    expect(readSessionLinesSpy).toHaveBeenCalledWith(filePath, undefined, { largeLineAsBuffer: true })
     expect(readSessionFileSpy).not.toHaveBeenCalled()
     readSessionLinesSpy.mockRestore()
     readSessionFileSpy.mockRestore()

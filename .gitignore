@@ -40,3 +40,6 @@ assets/discord-*.png
 
 # Desktop app experiments
 desktop/
+
+# WIP / not ready
+src/summit.ts

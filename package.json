@@ -1,6 +1,6 @@
 {
   "name": "codeburn",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "See where your AI coding tokens go - by task, tool, model, and project",
   "type": "module",
   "main": "./dist/cli.js",
@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "bundle-litellm": "node scripts/bundle-litellm.mjs",
-    "build": "node scripts/bundle-litellm.mjs && tsup",
+    "build": "node scripts/bundle-litellm.mjs && tsup && node -e \"const fs=require('fs'); fs.copyFileSync('src/cli.ts','dist/cli.js'); fs.chmodSync('dist/cli.js',0o755)\"",
     "dev": "tsx src/cli.ts",
     "test": "vitest",
     "prepublishOnly": "npm run build"
@@ -21,8 +21,11 @@
     "claude-code",
     "cursor",
     "codex",
+    "kimi",
+    "ibm-bob",
     "opencode",
     "pi",
+    "codebuff",
     "ai-coding",
     "token-usage",
     "cost-tracking",
@@ -30,7 +33,7 @@
     "developer-tools"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "author": "AgentSeal <hello@agentseal.org>",
   "license": "MIT",

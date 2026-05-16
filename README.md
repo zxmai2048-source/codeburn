@@ -13,7 +13,7 @@
     <a href="https://github.com/sponsors/iamtoruk"><img src="https://img.shields.io/badge/sponsor-♥-ea4aaa?logo=github" alt="Sponsor" /></a>                                                  
   </p> 
 
-CodeBurn tracks token usage, cost, and performance across **18 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
+CodeBurn tracks token usage, cost, and performance across **19 AI coding tools**. It breaks down spending by task type, model, tool, project, and provider so you can see exactly where your budget goes.
 
 Everything runs locally. No wrapper, no proxy, no API keys. CodeBurn reads session data directly from disk and prices every call using [LiteLLM](https://github.com/BerriAI/litellm).
 
@@ -99,11 +99,14 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 |---|----------|-----------|-----|
 | <img src="assets/providers/claude.jpg" width="28" /> | Claude Code | Yes | [claude.md](docs/providers/claude.md) |
 | <img src="assets/providers/claude.jpg" width="28" /> | Claude Desktop | Yes | [claude.md](docs/providers/claude.md) |
+| <img src="assets/providers/cline.svg" width="28" /> | Cline | Yes | [cline.md](docs/providers/cline.md) |
 | <img src="assets/providers/codex.png" width="28" /> | Codex (OpenAI) | Yes | [codex.md](docs/providers/codex.md) |
 | <img src="assets/providers/cursor.jpg" width="28" /> | Cursor | Yes | [cursor.md](docs/providers/cursor.md) |
 | <img src="assets/providers/cursor-agent.jpg" width="28" /> | cursor-agent | Yes | [cursor-agent.md](docs/providers/cursor-agent.md) |
 | <img src="assets/providers/gemini.png" width="28" /> | Gemini CLI | Yes | [gemini.md](docs/providers/gemini.md) |
+| <img src="assets/providers/mistral-vibe.svg" width="28" /> | Mistral Vibe | Yes | [mistral-vibe.md](docs/providers/mistral-vibe.md) |
 | <img src="assets/providers/copilot.jpg" width="28" /> | GitHub Copilot | Yes | [copilot.md](docs/providers/copilot.md) |
+| <img src="assets/providers/ibm-bob.svg" width="28" /> | IBM Bob | Yes | [ibm-bob.md](docs/providers/ibm-bob.md) |
 | <img src="assets/providers/kiro.png" width="28" /> | Kiro | Yes | [kiro.md](docs/providers/kiro.md) |
 | <img src="assets/providers/opencode.png" width="28" /> | OpenCode | Yes | [opencode.md](docs/providers/opencode.md) |
 | <img src="assets/providers/openclaw.jpg" width="28" /> | OpenClaw | Yes | [openclaw.md](docs/providers/openclaw.md) |
@@ -113,13 +116,14 @@ Arrow keys switch between Today, 7 Days, 30 Days, Month, and 6 Months (use `--fr
 | <img src="assets/providers/roo-code.png" width="28" /> | Roo Code | Yes | [roo-code.md](docs/providers/roo-code.md) |
 | <img src="assets/providers/kilo-code.png" width="28" /> | KiloCode | Yes | [kilo-code.md](docs/providers/kilo-code.md) |
 | <img src="assets/providers/qwen.png" width="28" /> | Qwen | Yes | [qwen.md](docs/providers/qwen.md) |
+| <img src="assets/providers/kimi.svg" width="28" /> | Kimi Code CLI | Yes | [kimi.md](docs/providers/kimi.md) |
 | <img src="assets/providers/goose.png" width="28" /> | Goose | Yes | [goose.md](docs/providers/goose.md) |
 | <img src="assets/providers/antigravity.png" width="28" /> | Antigravity | Yes | [antigravity.md](docs/providers/antigravity.md) |
 | <img src="assets/providers/crush.png" width="28" /> | Crush | Yes | [crush.md](docs/providers/crush.md) |
 
 Each provider doc lists the exact data location, storage format, and known quirks. Linux and Windows paths are detected automatically. If a path has changed or is wrong, please [open an issue](https://github.com/getagentseal/codeburn/issues).
 
-Provider logos are trademarks of their respective owners. The icon set was sourced from [tokscale](https://github.com/junhoyeo/tokscale) (MIT) plus official vendor assets, used under nominative fair use for the purpose of identifying supported tools.
+Provider logos are trademarks of their respective owners. The icon set was sourced from [tokscale](https://github.com/junhoyeo/tokscale) (MIT), official vendor assets, and simple provider identifiers, used under nominative fair use for the purpose of identifying supported tools.
 
 CodeBurn auto-detects which AI coding tools you use. If multiple providers have session data on disk, press `p` in the dashboard to toggle between them.
 
@@ -130,6 +134,8 @@ The `--provider` flag filters any command to a single provider: `codeburn report
 **Cursor** reads token usage from its local SQLite database. Since Cursor's "Auto" mode hides the actual model used, costs are estimated using Sonnet pricing (labeled "Auto (Sonnet est.)" in the dashboard). The Cursor view shows a Languages panel instead of Core Tools/Shell/MCP panels, since Cursor does not log individual tool calls. First run on a large Cursor database may take up to a minute; results are cached and subsequent runs are instant.
 
 **Gemini CLI** stores sessions as single JSON files. Each session embeds real token counts (input, output, cached, thoughts) per message, so no estimation is needed. Gemini reports input tokens inclusive of cached; CodeBurn subtracts cached from input before pricing to avoid double charging.
+
+**Mistral Vibe** stores sessions as folders under `~/.vibe/logs/session/` (or `$VIBE_HOME/logs/session/`). CodeBurn reads cumulative prompt/completion totals and model pricing from `meta.json`, then reads `messages.jsonl` for the first user prompt and assistant tool calls. Subagent sessions under `agents/` are counted as separate Vibe sessions.
 
 **Kiro** stores conversations as `.chat` JSON files. Token counts are estimated from content length. The underlying model is not exposed, so sessions are labeled `kiro-auto` and costed at Sonnet rates.
 
@@ -375,13 +381,21 @@ These are starting points, not verdicts. A 60% cache hit on a single experimenta
 
 **Pi / OMP** stores sessions as JSONL at `~/.pi/agent/sessions/<sanitized-cwd>/*.jsonl` (Pi) and `~/.omp/agent/sessions/<sanitized-cwd>/*.jsonl` (OMP). Each assistant message carries token usage (input, output, cacheRead, cacheWrite) plus inline `toolCall` content blocks. CodeBurn extracts token counts, normalizes tool names to the standard set (`bash` to `Bash`, `dispatch_agent` to `Agent`), and pulls bash commands from `toolCall.arguments.command` for the shell breakdown.
 
+**Codebuff** (formerly Manicode) stores per-chat history as JSON at `~/.config/manicode/projects/<project>/chats/<chatId>/chat-messages.json`. Codebuff bills in credits rather than tokens, so CodeBurn records each completed assistant message (via `msg.credits`) and approximates cost at the public pay-as-you-go rate ($0.01 / credit). When Codebuff routes a call through an upstream provider and the stashed RunState records token-level usage (`message.metadata.runState.sessionState.mainAgentState.messageHistory[*].providerOptions`), the real tokens and LiteLLM-calculated cost take precedence. Codebuff-native tool names (`read_files`, `str_replace`, `run_terminal_command`, `spawn_agents`, etc.) normalize to the canonical set (`Read`, `Edit`, `Bash`, `Agent`). The `manicode-dev` and `manicode-staging` channels are walked automatically when present. Honors `CODEBUFF_DATA_DIR` for a custom root.
+
 **Gemini CLI** stores sessions as single JSON files at `~/.gemini/tmp/<project>/chats/session-*.json`. Each session embeds real token counts (input, output, cached, thoughts) per message. Gemini reports input tokens inclusive of cached; CodeBurn subtracts cached from input before pricing to avoid double charging.
+
+**Mistral Vibe** stores session folders at `~/.vibe/logs/session/`. Each folder contains `meta.json` with cumulative prompt/completion token totals, model pricing, timestamps, and working directory, plus `messages.jsonl` with user prompts and assistant tool calls. CodeBurn emits one record per Vibe session because the source data is cumulative, not per assistant turn.
 
 **OpenClaw** stores agent sessions as JSONL at `~/.openclaw/agents/*.jsonl`. Also checks legacy paths `.clawdbot`, `.moltbot`, `.moldbot`. Token usage comes from assistant message `usage` blocks; model from `modelId` or `message.model` fields.
 
-**Roo Code / KiloCode** are Cline-family VS Code extensions. CodeBurn reads `ui_messages.json` from each task directory in VS Code's `globalStorage`, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts.
+**Cline / Roo Code / KiloCode** are Cline-family coding agents. CodeBurn reads `ui_messages.json` from each task directory, filtering `type: "say"` entries with `say: "api_req_started"` to extract token counts. Cline scans both VS Code's `globalStorage/saoudrizwan.claude-dev` and `~/.cline/data`.
 
-CodeBurn deduplicates messages (by API message ID for Claude, by cumulative token cross-check for Codex, by conversation/timestamp for Cursor, by session ID for Gemini, by session+message ID for OpenCode, by responseId for Pi/OMP), filters by date range per entry, and classifies each turn.
+**IBM Bob** stores IDE task history in `User/globalStorage/ibm.bob-code/tasks/<task-id>/` under the IBM Bob application data directory. CodeBurn reads `ui_messages.json` for API request token/cost records and `api_conversation_history.json` for the selected model, with support for both GA (`IBM Bob`) and preview (`Bob-IDE`) app data folders.
+
+**Kimi Code CLI** stores session logs under `$KIMI_SHARE_DIR/sessions/<workdir-hash>/<session-id>/` or `~/.kimi/sessions/<workdir-hash>/<session-id>/`. CodeBurn reads `wire.jsonl` `StatusUpdate.token_usage` records, maps `input_other`, `input_cache_read`, `input_cache_creation`, and `output` into the standard token columns, and includes subagent sessions under each session's `subagents/` folder.
+
+CodeBurn deduplicates messages (by API message ID for Claude, by cumulative token cross-check for Codex, by conversation/timestamp for Cursor, by session ID for Gemini, by session+message ID for OpenCode, by responseId for Pi/OMP, by chat folder + message ID for Codebuff, by session+message ID for Kimi), filters by date range per entry, and classifies each turn.
 
 ## Environment Variables
 
@@ -390,8 +404,12 @@ CodeBurn deduplicates messages (by API message ID for Claude, by cumulative toke
 | `CLAUDE_CONFIG_DIR` | Override Claude Code data directory (default: `~/.claude`) |
 | `CLAUDE_CONFIG_DIRS` | OS-delimited list of Claude data directories to scan together (e.g. `~/.claude-work:~/.claude-personal`). Sessions merge into one row per project. Overrides `CLAUDE_CONFIG_DIR` when set. |
 | `CODEX_HOME` | Override Codex data directory (default: `~/.codex`) |
+| `CODEBUFF_DATA_DIR` | Override Codebuff data directory (default: `~/.config/manicode`) |
 | `FACTORY_DIR` | Override Droid data directory (default: `~/.factory`) |
+| `KIMI_SHARE_DIR` | Override Kimi Code CLI share directory (default: `~/.kimi`) |
+| `KIMI_MODEL_NAME` | Override Kimi model name when Kimi sessions do not record the model |
 | `QWEN_DATA_DIR` | Override Qwen data directory (default: `~/.qwen/projects`) |
+| `VIBE_HOME` | Override Mistral Vibe home directory (default: `~/.vibe`) |
 
 ## Sponsoring CodeBurn
 

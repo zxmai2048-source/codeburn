@@ -43,7 +43,7 @@ type Bucket = {
 }
 
 type ModelKey = string
-type CategoryKey = string
+type CategoryKey = TaskCategory
 
 function bucketKey(provider: string, model: string, category: TaskCategory | null): string {
   return `${provider} ${model} ${category ?? ''}`

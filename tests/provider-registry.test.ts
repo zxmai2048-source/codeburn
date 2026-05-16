@@ -3,7 +3,25 @@ import { providers, getAllProviders } from '../src/providers/index.js'
 
 describe('provider registry', () => {
   it('has core providers registered synchronously', () => {
-    expect(providers.map(p => p.name)).toEqual(['claude', 'codex', 'copilot', 'droid', 'gemini', 'kilo-code', 'kiro', 'openclaw', 'pi', 'omp', 'qwen', 'roo-code'])
+    expect(providers.map(p => p.name)).toEqual(['claude', 'cline', 'codebuff', 'codex', 'copilot', 'droid', 'gemini', 'ibm-bob', 'kilo-code', 'kiro', 'kimi', 'mistral-vibe', 'openclaw', 'pi', 'omp', 'qwen', 'roo-code'])
+  })
+
+  it('codebuff tool display names normalize codebuff-native names to canonical set', () => {
+    const codebuff = providers.find(p => p.name === 'codebuff')!
+    expect(codebuff.toolDisplayName('read_files')).toBe('Read')
+    expect(codebuff.toolDisplayName('code_search')).toBe('Grep')
+    expect(codebuff.toolDisplayName('str_replace')).toBe('Edit')
+    expect(codebuff.toolDisplayName('run_terminal_command')).toBe('Bash')
+    expect(codebuff.toolDisplayName('spawn_agents')).toBe('Agent')
+    expect(codebuff.toolDisplayName('write_todos')).toBe('TodoWrite')
+    expect(codebuff.toolDisplayName('unknown_tool')).toBe('unknown_tool')
+  })
+
+  it('codebuff model display names cover known agent tiers', () => {
+    const codebuff = providers.find(p => p.name === 'codebuff')!
+    expect(codebuff.modelDisplayName('codebuff')).toBe('Codebuff')
+    expect(codebuff.modelDisplayName('codebuff-base2')).toBe('Codebuff Base 2')
+    expect(codebuff.modelDisplayName('some-future-model')).toBe('some-future-model')
   })
 
   it('includes sqlite providers after async load', async () => {
@@ -58,6 +76,14 @@ describe('provider registry', () => {
     const claude = providers.find(p => p.name === 'claude')!
     expect(claude.modelDisplayName('claude-opus-4-6-20260205')).toBe('Opus 4.6')
     expect(claude.modelDisplayName('claude-sonnet-4-6')).toBe('Sonnet 4.6')
+  })
+
+  it('kimi model and tool display names are normalized', () => {
+    const kimi = providers.find(p => p.name === 'kimi')!
+    expect(kimi.modelDisplayName('kimi-auto')).toBe('Kimi (auto)')
+    expect(kimi.modelDisplayName('kimi-k2-thinking-turbo')).toBe('Kimi K2 Thinking Turbo')
+    expect(kimi.toolDisplayName('Shell')).toBe('Bash')
+    expect(kimi.toolDisplayName('WriteFile')).toBe('Write')
   })
 
   it('cursor model display names handle auto mode', async () => {

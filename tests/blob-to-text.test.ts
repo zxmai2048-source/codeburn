@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { blobToText } from '../src/sqlite.js'
+import { blobToText, isSqliteBusyError } from '../src/sqlite.js'
 
 describe('blobToText', () => {
   it('returns empty string for null', () => {
@@ -35,5 +35,19 @@ describe('blobToText', () => {
 
   it('handles empty Uint8Array', () => {
     expect(blobToText(new Uint8Array(0))).toBe('')
+  })
+})
+
+describe('isSqliteBusyError', () => {
+  it('detects node:sqlite busy errors by errcode', () => {
+    expect(isSqliteBusyError({ code: 'ERR_SQLITE_ERROR', errcode: 5, errstr: 'database is locked' })).toBe(true)
+  })
+
+  it('detects sqlite locked messages', () => {
+    expect(isSqliteBusyError(new Error('SQLITE_LOCKED: database table is locked'))).toBe(true)
+  })
+
+  it('ignores unrelated sqlite errors', () => {
+    expect(isSqliteBusyError(new Error('no such table: session'))).toBe(false)
   })
 })

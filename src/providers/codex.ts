@@ -65,6 +65,8 @@ type CodexTokenUsage = {
 }
 
 const CHARS_PER_TOKEN = 4
+const RAW_HEAD_BYTES = 64 * 1024
+const LARGE_TEXT_CAP = 2000
 
 function getCodexDir(override?: string): string {
   return override ?? process.env['CODEX_HOME'] ?? join(homedir(), '.codex')
@@ -124,6 +126,116 @@ async function isValidCodexSession(filePath: string): Promise<{ valid: boolean; 
     typeof entry.payload?.originator === 'string' &&
     entry.payload.originator.toLowerCase().startsWith('codex')
   return { valid, meta: valid ? entry : undefined }
+}
+
+function getRawJsonStringField(head: string, field: string): string | undefined {
+  const re = new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`)
+  const match = re.exec(head)
+  if (!match) return undefined
+  try {
+    return JSON.parse(`"${match[1]}"`) as string
+  } catch {
+    return match[1]
+  }
+}
+
+function payloadHead(head: string): string {
+  const idx = head.indexOf('"payload"')
+  return idx === -1 ? head : head.slice(idx)
+}
+
+function countJsonStringBytes(source: Buffer, valueStart: number): number {
+  let count = 0
+  for (let i = valueStart; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === 0x5c) {
+      i++
+      count++
+      continue
+    }
+    if (ch === 0x22) return count
+    count++
+  }
+  return count
+}
+
+function extractFirstJsonText(source: Buffer, cap = LARGE_TEXT_CAP): string {
+  const key = Buffer.from('"text"')
+  const idx = source.indexOf(key)
+  if (idx === -1) return ''
+  const colon = source.indexOf(0x3a, idx + key.length)
+  if (colon === -1) return ''
+  const qStart = source.indexOf(0x22, colon + 1)
+  if (qStart === -1) return ''
+  const chunks: number[] = []
+  for (let i = qStart + 1; i < source.length && chunks.length < cap; i++) {
+    const ch = source[i]
+    if (ch === 0x5c) {
+      const next = source[++i]
+      if (next === 0x6e) chunks.push(0x0a)
+      else if (next === 0x72) chunks.push(0x0d)
+      else if (next === 0x74) chunks.push(0x09)
+      else if (next !== undefined) chunks.push(next)
+      continue
+    }
+    if (ch === 0x22) break
+    chunks.push(ch)
+  }
+  return Buffer.from(chunks).toString('utf-8')
+}
+
+function countFirstJsonText(source: Buffer): number {
+  const key = Buffer.from('"text"')
+  const idx = source.indexOf(key)
+  if (idx === -1) return 0
+  const colon = source.indexOf(0x3a, idx + key.length)
+  if (colon === -1) return 0
+  const qStart = source.indexOf(0x22, colon + 1)
+  if (qStart === -1) return 0
+  return countJsonStringBytes(source, qStart + 1)
+}
+
+function parseCodexLine(line: string | Buffer): CodexEntry | null {
+  if (typeof line === 'string') {
+    const trimmed = line.trim()
+    if (!trimmed) return null
+    try {
+      return JSON.parse(trimmed) as CodexEntry
+    } catch {
+      return null
+    }
+  }
+
+  if (line.length === 0) return null
+  const head = line.subarray(0, RAW_HEAD_BYTES).toString('utf-8')
+  const type = getRawJsonStringField(head, 'type')
+  if (!type) return null
+  const pHead = payloadHead(head)
+  const payloadType = getRawJsonStringField(pHead, 'type')
+  const role = getRawJsonStringField(pHead, 'role')
+
+  const entry: CodexEntry = {
+    type,
+    timestamp: getRawJsonStringField(head, 'timestamp'),
+    payload: {
+      type: payloadType,
+      role,
+      cwd: getRawJsonStringField(pHead, 'cwd'),
+      model_provider: getRawJsonStringField(pHead, 'model_provider'),
+      originator: getRawJsonStringField(pHead, 'originator'),
+      session_id: getRawJsonStringField(pHead, 'session_id'),
+      model: getRawJsonStringField(pHead, 'model'),
+      name: getRawJsonStringField(pHead, 'name'),
+    },
+  }
+
+  if (type === 'response_item' && payloadType === 'message' && role === 'user') {
+    entry.payload!.content = [{ type: 'input_text', text: extractFirstJsonText(line) }]
+  } else if (type === 'response_item' && payloadType === 'message' && role === 'assistant') {
+    entry.payload!.content = [{ type: 'output_text', text: 'x'.repeat(Math.min(countFirstJsonText(line), LARGE_TEXT_CAP)) }]
+  }
+
+  return entry
 }
 
 async function discoverSessionsInDir(codexDir: string): Promise<SessionSource[]> {
@@ -224,18 +336,12 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       // Stream the session file line by line. Heavy Codex sessions can exceed
       // 250 MB on disk; reading the entire file into a string would either hit
       // the readSessionFile cap or push V8 toward its 512 MB string limit
-      // after split('\n'). readSessionLines streams via readline so memory
-      // stays bounded to the longest line.
-      for await (const rawLine of readSessionLines(source.path)) {
+      // after split('\n'). readSessionLines streams raw buffers and hands
+      // huge lines to the compact parser without full string conversion.
+      for await (const rawLine of readSessionLines(source.path, undefined, { largeLineAsBuffer: true })) {
         sawAnyLine = true
-        const line = rawLine.trim()
-        if (!line) continue
-        let entry: CodexEntry
-        try {
-          entry = JSON.parse(line) as CodexEntry
-        } catch {
-          continue
-        }
+        const entry = parseCodexLine(rawLine)
+        if (!entry) continue
 
         if (entry.type === 'session_meta') {
           sessionId = entry.payload?.session_id ?? basename(source.path, '.jsonl')

@@ -13,6 +13,9 @@ function runCli(args: string[], home: string) {
     env: {
       ...process.env,
       HOME: home,
+      USERPROFILE: home, // os.homedir() uses USERPROFILE on Windows
+      HOMEPATH: home,
+      HOMEDRIVE: '',
     },
     encoding: 'utf-8',
   })

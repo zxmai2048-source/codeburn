@@ -14,10 +14,87 @@
   continue to load as a backward-compatible fallback, and subsequent writes
   save the new `plans` map format. Preset plans now reject mismatched
   `--provider` scopes instead of silently ignoring them. Closes #299.
+- **Mistral Vibe provider.** CodeBurn now reads Mistral Vibe session folders
+  from `$VIBE_HOME/logs/session/` or `~/.vibe/logs/session/`, using
+  `meta.json` for cumulative prompt/completion tokens, model pricing, and
+  timestamps, and `messages.jsonl` for user prompts and tool calls. Subagent
+  sessions under a parent session's `agents/` folder are tracked separately.
+  Closes #283.
+- **Kimi Code CLI provider.** CodeBurn now reads Kimi session usage from
+  `$KIMI_SHARE_DIR/sessions/` or `~/.kimi/sessions/`, including subagent
+  `wire.jsonl` files. The parser consumes Kimi's official `StatusUpdate`
+  token usage fields (`input_other`, `input_cache_read`,
+  `input_cache_creation`, `output`), normalizes Kimi tool names such as
+  `Shell`, `ReadFile`, and `WriteFile`, and maps hidden managed Kimi Code
+  model aliases to priced Kimi K2 entries.
+
+## 0.9.9 - 2026-05-15
+
+### Added (CLI)
+- **IBM Bob provider.** Discovers IBM Bob IDE task history, reuses the
+  Cline-family parser for token/cost records, extracts model tags and
+  workspace-based project names from session data. Closes #248.
+
+### Fixed (CLI)
+- **Reduced Claude parser OOM risk.** Large Claude JSONL sessions retained
+  full entry objects (text, thinking blocks, tool results) in memory during
+  parsing, causing V8 heap exhaustion on heavy usage months. Entries are now
+  compacted immediately after JSON.parse, keeping only the fields needed for
+  cost/token aggregation. This is a mitigation - very heavy users may still
+  need the streaming parser refactor planned next.
+- **Eager daily-cache hydration caused OOM on most CLI commands.** Eight
+  commands (report, today, month, export, optimize, compare, models, yield)
+  called `hydrateCache()` which parses a 365-day backfill, even though only
+  `status --format menubar-json` consumes the daily cache. Removed from all
+  paths that parse their own date ranges via `parseAllSessions`.
+- **Session cache retained between status parses.** The `status --format json`
+  path parsed today and month ranges without clearing the in-process session
+  cache between them, keeping both result sets pinned. Cache is now cleared
+  after each period is consumed.
+- **Claude 1-hour cache write pricing.** 1-hour cache writes are now priced
+  at 2x base input (previously used the 5-minute 1.25x rate for all writes).
+  Daily cache bumped to v6 so stale totals are recomputed. Closes #276.
+- **OpenCode MCP usage now counted.** OpenCode stores MCP tool calls as
+  `<server>_<tool>` names, which the shared MCP pipeline did not recognize.
+  The provider now normalizes these to the canonical `mcp__<server>__<tool>`
+  form so MCP breakdowns and `optimize` work correctly. Closes #308.
+- **Antigravity Windows language-server discovery.** Antigravity detection now
+  supports Windows process discovery, `--extension_server_port`,
+  `--extension_server_csrf_token`, `--flag=value` syntax, and both wrapped and
+  unwrapped Connect-RPC response shapes. Closes #249.
+- **Mangled project names in dashboard.** The By Project and Top Sessions
+  panels decoded slugs by splitting on `-`, which broke directory names
+  containing dashes or dots (e.g. `my-project` rendered as `my/project`).
+  Now uses the real project path instead. Closes #320.
+- **Cursor undated bubble rows misattributed to Today.** Bubble rows without
+  a `createdAt` timestamp were defaulting to the current date, inflating
+  Today's spend. Now skipped at both the SQL and application level.
+- **Node version guard.** Running on Node < 22.13.0 now prints a clear
+  upgrade message instead of crashing with a cryptic `node:sqlite` parse
+  error. Closes #319.
+
+### Fixed (macOS menubar)
+- **All-provider refresh OOM.** Refreshing with provider set to "All" could
+  exhaust the V8 heap on accounts with heavy session history.
+- **Tab refresh recovery.** Switching tabs during a refresh no longer leaves
+  the panel in a stale loading state.
+- **Stale cache recovery.** The menubar now detects and discards a corrupt or
+  outdated on-disk cache instead of rendering zeroes until the next restart.
+- **Refresh timer hardening.** The 30-second auto-refresh timer is now
+  cancelled on sleep/wake and restarted cleanly, preventing overlapping
+  refreshes after lid-open.
+- **Version display.** The settings panel now shows the version without the
+  `v` prefix for consistency with `codeburn --version`.
 
 ## 0.9.8 - 2026-05-10
 
 ### Added (CLI)
+- **Cline provider support.** CodeBurn now reads Cline task usage from both
+  VS Code globalStorage (`saoudrizwan.claude-dev`) and Cline's
+  `~/.cline/data` task root. It reuses the existing Cline-family parser for
+  `ui_messages.json` usage entries, deduplicates migrated tasks by the newest
+  `ui_messages.json`, and exposes Cline in CLI provider filters, docs, and the
+  macOS menubar provider tabs. Closes #130.
 - **Multiple Claude config directories.** Set `CLAUDE_CONFIG_DIRS` to an
   OS-delimited list of paths (`:`-separated on POSIX, `;`-separated on
   Windows) to scan more than one Claude data directory in a single run.
