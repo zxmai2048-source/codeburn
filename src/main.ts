@@ -7,7 +7,7 @@ import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
 import { type PeriodData, type ProviderCost } from './menubar-json.js'
 import { buildMenubarPayload } from './menubar-json.js'
-import { getDaysInRange, ensureCacheHydrated, emptyCache, BACKFILL_DAYS, toDateString } from './daily-cache.js'
+import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache } from './daily-cache.js'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays, dateKey } from './day-aggregator.js'
 import { CATEGORY_LABELS, type DateRange, type ProjectSummary, type TaskCategory } from './types.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
@@ -444,7 +444,6 @@ program
       const rangeEndStr = toDateString(periodInfo.range.end)
       const isAllProviders = pf === 'all'
 
-      const cache = await hydrateCache()
       let todayAllProjects: ProjectSummary[] | null = null
       let todayAllDays: ReturnType<typeof aggregateProjectsIntoDays> | null = null
 
@@ -462,17 +461,15 @@ program
         return todayAllDays
       }
 
-      // CURRENT PERIOD DATA
-      // - .all provider: assemble from cache + today (fast)
-      // - specific provider: parse the period range with provider filter (correct, but slower)
       let currentData: PeriodData
       let scanProjects: ProjectSummary[]
       let scanRange: DateRange
+      let cache: DailyCache
+      let todayProviderData: PeriodData | null = null
+      let usedPerProviderCachePath = false
 
       if (isAllProviders) {
-        // Parse today's all-provider sessions once; historical data comes from cache to avoid
-        // double-counting. Reusing the same parsed object is important for the menubar path:
-        // large active sessions can OOM if this command retains multiple near-identical scans.
+        cache = await hydrateCache()
         const todayProjects = await getTodayAllProjects()
         const todayDays = await getTodayAllDays()
         const historicalDays = getDaysInRange(cache, rangeStartStr, yesterdayStr)
@@ -480,26 +477,35 @@ program
         const allDays = [...historicalDays, ...todayInRange].sort((a, b) => a.date.localeCompare(b.date))
         currentData = buildPeriodDataFromDays(allDays, periodInfo.label)
         scanProjects = todayProjects
-        scanRange = periodInfo.range
-      } else {
-        // Per-provider: parse only today (fast), use cache for historical days.
-        // The cache stores per-provider cost+calls per day, so we extract those
-        // and combine with today's fully-parsed provider data.
-        const todayProviderProjects = fp(await parseAllSessions(todayRange, pf))
-        const todayData = buildPeriodData(periodInfo.label, todayProviderProjects)
-        const historicalDays = getDaysInRange(cache, rangeStartStr, yesterdayStr)
-        let histCost = 0, histCalls = 0
-        for (const d of historicalDays) {
-          const prov = d.providers[pf]
-          if (prov) { histCost += prov.cost; histCalls += prov.calls }
-        }
-        currentData = {
-          ...todayData,
-          cost: todayData.cost + histCost,
-          calls: todayData.calls + histCalls,
-        }
-        scanProjects = todayProviderProjects
         scanRange = todayRange
+      } else {
+        cache = await loadDailyCache()
+        const cacheIsCurrent = cache.lastComputedDate !== null
+          && cache.lastComputedDate >= yesterdayStr
+        if (cacheIsCurrent && rangeStartStr < todayStr) {
+          const todayProviderProjects = fp(await parseAllSessions(todayRange, pf))
+          todayProviderData = buildPeriodData(periodInfo.label, todayProviderProjects)
+          const historicalDays = getDaysInRange(cache, rangeStartStr, yesterdayStr)
+          let histCost = 0, histCalls = 0
+          for (const d of historicalDays) {
+            const prov = d.providers[pf]
+            if (prov) { histCost += prov.cost; histCalls += prov.calls }
+          }
+          currentData = {
+            ...todayProviderData,
+            cost: todayProviderData.cost + histCost,
+            calls: todayProviderData.calls + histCalls,
+          }
+          scanProjects = todayProviderProjects
+          scanRange = todayRange
+          usedPerProviderCachePath = true
+        } else {
+          const fullProjects = fp(await parseAllSessions(periodInfo.range, pf))
+          todayProviderData = buildPeriodData(periodInfo.label, fullProjects)
+          currentData = todayProviderData
+          scanProjects = fullProjects
+          scanRange = periodInfo.range
+        }
       }
 
       // PROVIDERS
@@ -538,9 +544,12 @@ program
       // in the cache, so the filtered view shows zero tokens (heatmap/trend still works on cost).
       const historyStartStr = toDateString(new Date(now.getFullYear(), now.getMonth(), now.getDate() - BACKFILL_DAYS))
       const allCacheDays = getDaysInRange(cache, historyStartStr, yesterdayStr)
-      const fullHistory = [...allCacheDays, ...(await getTodayAllDays()).filter(d => d.date === todayStr)]
-      const dailyHistory = fullHistory.map(d => {
-        if (isAllProviders) {
+
+      let dailyHistory
+      if (isAllProviders) {
+        const todayDays = (await getTodayAllDays()).filter(d => d.date === todayStr)
+        const fullHistory = [...allCacheDays, ...todayDays]
+        dailyHistory = fullHistory.map(d => {
           const topModels = Object.entries(d.models)
             .filter(([name]) => name !== '<synthetic>')
             .sort(([, a], [, b]) => b.cost - a.cost)
@@ -562,19 +571,52 @@ program
             cacheWriteTokens: d.cacheWriteTokens,
             topModels,
           }
+        })
+      } else if (usedPerProviderCachePath) {
+        const historyFromCache = allCacheDays.map(d => {
+          const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
+          return {
+            date: d.date,
+            cost: prov.cost,
+            calls: prov.calls,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            topModels: [] as { name: string; cost: number; calls: number; inputTokens: number; outputTokens: number }[],
+          }
+        })
+        const todayCost = todayProviderData!.cost
+        const todayCalls = todayProviderData!.calls
+        if (todayCost > 0 || todayCalls > 0) {
+          historyFromCache.push({
+            date: todayStr,
+            cost: todayCost,
+            calls: todayCalls,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            topModels: [],
+          })
         }
-        const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
-        return {
-          date: d.date,
-          cost: prov.cost,
-          calls: prov.calls,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          topModels: [],
-        }
-      })
+        dailyHistory = historyFromCache
+      } else {
+        const fallbackDays = aggregateProjectsIntoDays(scanProjects)
+        dailyHistory = fallbackDays.map(d => {
+          const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
+          return {
+            date: d.date,
+            cost: prov.cost,
+            calls: prov.calls,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            topModels: [] as { name: string; cost: number; calls: number; inputTokens: number; outputTokens: number }[],
+          }
+        })
+      }
 
       const optimize = opts.optimize === false ? null : await scanAndDetect(scanProjects, scanRange)
       console.log(JSON.stringify(buildMenubarPayload(currentData, providers, optimize, dailyHistory)))

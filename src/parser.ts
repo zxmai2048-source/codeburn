@@ -1373,9 +1373,7 @@ async function scanProjectDirs(
     }
   }
 
-  // Parse changed files, update cache
   for (const { filePath, info } of changedFiles) {
-    // Clear stale entry before parse — if parse fails, file is excluded
     delete section.files[filePath]
 
     const tracker = { lastCompleteLineOffset: 0 }
@@ -1390,16 +1388,18 @@ async function scanProjectDirs(
       mcpInventory: extractMcpInventory(entries),
       turns: turns.map(parsedTurnToCachedTurn),
     }
+    ;(diskCache as { _dirty?: boolean })._dirty = true
   }
 
-  // Remove deleted files from cache
-  for (const cachedPath of Object.keys(section.files)) {
-    if (!allDiscoveredFiles.has(cachedPath)) {
-      delete section.files[cachedPath]
+  if (dirs.length > 0) {
+    for (const cachedPath of Object.keys(section.files)) {
+      if (!allDiscoveredFiles.has(cachedPath)) {
+        delete section.files[cachedPath]
+        ;(diskCache as { _dirty?: boolean })._dirty = true
+      }
     }
   }
 
-  // Query-time: derive ProjectSummary[] from all cached turns
   const projectMap = new Map<string, { project: string; projectPath: string; sessions: SessionSummary[] }>()
 
   const allFiles = [
@@ -1716,6 +1716,7 @@ async function parseProviderSources(
         }
         section.files[source.path] = { fingerprint: fp, mcpInventory: [], turns }
         didParse = true
+        ;(diskCache as { _dirty?: boolean })._dirty = true
       } catch (err) {
         if (isSqliteBusyError(err)) {
           warnProviderReadFailureOnce(providerName, err)
@@ -1732,10 +1733,12 @@ async function parseProviderSources(
     }
   }
 
-  // Remove deleted files from cache
-  for (const cachedPath of Object.keys(section.files)) {
-    if (!allDiscoveredFiles.has(cachedPath)) {
-      delete section.files[cachedPath]
+  if (sources.length > 0) {
+    for (const cachedPath of Object.keys(section.files)) {
+      if (!allDiscoveredFiles.has(cachedPath)) {
+        delete section.files[cachedPath]
+        ;(diskCache as { _dirty?: boolean })._dirty = true
+      }
     }
   }
 
@@ -1919,7 +1922,9 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
     otherProjects.push(...projects)
   }
 
-  try { await saveCache(diskCache) } catch {}
+  if ((diskCache as { _dirty?: boolean })._dirty) {
+    try { await saveCache(diskCache) } catch {}
+  }
 
   const mergedMap = new Map<string, ProjectSummary>()
   for (const p of [...claudeProjects, ...otherProjects]) {

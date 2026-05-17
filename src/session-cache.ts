@@ -209,6 +209,7 @@ export async function saveCache(cache: SessionCache): Promise<void> {
 
   const finalPath = getCachePath()
   const tempPath = `${finalPath}.${randomBytes(8).toString('hex')}.tmp`
+  delete (cache as { _dirty?: boolean })._dirty
   const payload = JSON.stringify(cache)
 
   const handle = await open(tempPath, 'w', 0o600)
