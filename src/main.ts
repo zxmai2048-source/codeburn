@@ -462,6 +462,14 @@ program
   .option('--no-optimize', 'Skip optimize findings (menubar-json only, faster)')
   .action(async (opts) => {
     assertFormat(opts.format, ['terminal', 'menubar-json', 'json'], 'status')
+    if (opts.day && (opts.from || opts.to)) {
+      process.stderr.write('error: --day cannot be combined with --from or --to\n')
+      process.exit(1)
+    }
+    if (opts.days && (opts.day || opts.from || opts.to)) {
+      process.stderr.write('error: --days cannot be combined with --day, --from, or --to\n')
+      process.exit(1)
+    }
     await loadPricing()
     const pf = opts.provider
     const fp = (p: ProjectSummary[]) => filterProjectsByName(p, opts.project, opts.exclude)

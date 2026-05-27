@@ -194,13 +194,13 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           const inputTokens = Math.max(0, promptTokens - cachedInputTokens)
           if (inputTokens === 0 && outputTokens === 0) continue
 
+          const model = typeof text?.model === 'string' ? text.model : 'unknown'
           const calls = toolCalls(text?.tool_calls)
           const { tools, bashCommands, firstCallId } = extractToolsAndCommands(calls)
-          const deduplicationKey = `forge:${row.conversation_id}:${firstCallId ?? i}`
+          const stableId = firstCallId ?? `${model}:${promptTokens}:${outputTokens}:${i}`
+          const deduplicationKey = `forge:${row.conversation_id}:${stableId}`
           if (seenKeys.has(deduplicationKey)) continue
           seenKeys.add(deduplicationKey)
-
-          const model = typeof text?.model === 'string' ? text.model : 'unknown'
           yield {
             provider: 'forge',
             model,

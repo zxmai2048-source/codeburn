@@ -182,6 +182,7 @@ function validateCall(c: unknown): c is CachedCall {
     && isStringArray(o['tools'])
     && isStringArray(o['bashCommands'])
     && isStringArray(o['skills'])
+    && (o['subagentTypes'] === undefined || isStringArray(o['subagentTypes']))
     && isOptionalString(o['project'])
     && isOptionalString(o['projectPath'])
     && (o['toolSequence'] === undefined || (Array.isArray(o['toolSequence']) && (o['toolSequence'] as unknown[]).every(s => isToolCallArray(s))))
