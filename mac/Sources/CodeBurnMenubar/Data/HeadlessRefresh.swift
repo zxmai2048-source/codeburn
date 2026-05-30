@@ -15,8 +15,8 @@ enum HeadlessRefresh {
         let box = ExitBox()
         Task {
             do {
-                let defaults = Bundle.main.bundleIdentifier.flatMap { UserDefaults(suiteName: $0) } ?? .standard
-                let period = Period.savedMenubarPeriod(defaults: defaults)
+                // Same bundle ID as the GUI app, so .standard is its own domain.
+                let period = Period.savedMenubarPeriod()
                 let payload = try await DataClient.fetch(period: period, provider: .all, includeOptimize: false)
                 try MenubarStatusCache.standard().writeStatus(payload)
                 box.code = 0
