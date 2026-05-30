@@ -14,6 +14,15 @@ private let popoverHeight: CGFloat = 660
 private let menubarTitleFontSize: CGFloat = 13
 
 @main
+enum CodeBurnEntry {
+    static func main() {
+        if CommandLine.arguments.dropFirst().contains("--refresh-once") {
+            HeadlessRefresh.run()
+        }
+        CodeBurnApp.main()
+    }
+}
+
 struct CodeBurnApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
@@ -85,7 +94,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         startRefreshLoop()
         setupWakeObservers()
         setupDistributedNotificationListener()
-        regenerateRefreshScriptIfNeeded()
         installLaunchAgentIfNeeded()
         registerLoginItemIfNeeded()
         observeSubscriptionDisconnect()
@@ -208,26 +216,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private var lastScriptPeriod: Period?
-
-    private func regenerateRefreshScriptIfNeeded() {
-        let period = store.menubarPeriod
-        guard lastScriptPeriod != period else { return }
-        do {
-            try MenubarStatusCache.standard().writeRefreshScript(period: period)
-            lastScriptPeriod = period
-        } catch {
-            NSLog("CodeBurn: failed to write menubar-refresh.sh: \(error)")
-        }
-    }
-
     private func installLaunchAgentIfNeeded() {
         let fm = FileManager.default
         let agentName = "com.codeburn.refresh.plist"
         let home = fm.homeDirectoryForCurrentUser.path
         let destPath = "\(home)/Library/LaunchAgents/\(agentName)"
 
-        let scriptPath = "\(home)/.cache/codeburn/menubar-refresh.sh"
+        // Run the app's own signed binary headless so the CLI it spawns inherits
+        // CodeBurn's TCC grant instead of prompting as a bare `node` process.
+        guard let binaryPath = Bundle.main.executablePath else {
+            NSLog("CodeBurn: no executablePath; skipping LaunchAgent install")
+            return
+        }
         let plist = """
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -237,8 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     <string>com.codeburn.refresh</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/sh</string>
-        <string>\(scriptPath)</string>
+        <string>\(binaryPath)</string>
+        <string>--refresh-once</string>
     </array>
     <key>StartInterval</key>
     <integer>30</integer>
@@ -668,7 +668,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.pendingRefreshWork?.cancel()
                 let work = DispatchWorkItem { [weak self] in
                     self?.refreshStatusButton()
-                    self?.regenerateRefreshScriptIfNeeded()
                     self?.observeStore()
                 }
                 self.pendingRefreshWork = work

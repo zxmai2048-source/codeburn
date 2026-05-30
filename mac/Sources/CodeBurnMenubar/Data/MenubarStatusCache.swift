@@ -1,21 +1,17 @@
 import Foundation
 
-/// On-disk badge backstop. A static LaunchAgent runs `menubar-refresh.sh` every
-/// 30s and atomically writes `menubar-status.json`; the app reads it as a badge
-/// fallback when the in-app refresh loop is behind or dead. Shares the
-/// `MenubarPayload` decoder with the live path — no separate data model.
+/// On-disk badge backstop. A static LaunchAgent runs the app's own signed binary
+/// in `--refresh-once` mode every 30s; it atomically writes `menubar-status.json`,
+/// which the app reads as a badge fallback when the in-app refresh loop is behind
+/// or dead. Shares the `MenubarPayload` decoder with the live path — no separate
+/// data model.
 struct MenubarStatusCache {
     let statusPath: String
-    let scriptPath: String
 
-    /// Default locations under `~/.cache/codeburn/`.
+    /// Default location under `~/.cache/codeburn/`.
     static func standard() -> MenubarStatusCache {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let dir = "\(home)/.cache/codeburn"
-        return MenubarStatusCache(
-            statusPath: "\(dir)/menubar-status.json",
-            scriptPath: "\(dir)/menubar-refresh.sh"
-        )
+        return MenubarStatusCache(statusPath: "\(home)/.cache/codeburn/menubar-status.json")
     }
 
     struct BadgeRead {
@@ -41,22 +37,8 @@ struct MenubarStatusCache {
         return BadgeRead(payload: payload, ageSeconds: age)
     }
 
-    // Interpolated values are app-controlled: argv via CodeburnCLI.scriptEnvironment
-    // (isSafe-validated) and period via the Period enum's fixed cliArg set.
-    func writeRefreshScript(period: Period) throws {
-        let env = CodeburnCLI.scriptEnvironment()
-        // Left unquoted on purpose: a multi-token argv (e.g. "node /path/cli.js")
-        // must word-split into separate argv elements. isSafe excludes all shell
-        // metacharacters, so the only thing a token can add is extra words.
-        let binCommand = env.argv.joined(separator: " ")
-        let tmpPath = statusPath + ".tmp"
-        let body = """
-        #!/bin/sh
-        export PATH="\(env.path)"
-        TMP="\(tmpPath)"
-        OUT="\(statusPath)"
-        \(binCommand) status --format menubar-json --provider all --period \(period.cliArg) --no-optimize > "$TMP" 2>/dev/null && mv -f "$TMP" "$OUT" || rm -f "$TMP"
-        """
-        try SafeFile.write(Data(body.utf8), to: scriptPath, mode: 0o700)
+    func writeStatus(_ payload: MenubarPayload) throws {
+        let data = try JSONEncoder().encode(payload)
+        try SafeFile.write(data, to: statusPath, mode: 0o600)
     }
 }

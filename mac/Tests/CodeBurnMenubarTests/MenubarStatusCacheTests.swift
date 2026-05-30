@@ -33,7 +33,7 @@ struct MenubarStatusCacheTests {
         let dir = tempDir()
         let path = dir + "/menubar-status.json"
         try validPayloadJSON(cost: 42.5).write(to: URL(fileURLWithPath: path))
-        let cache = MenubarStatusCache(statusPath: path, scriptPath: dir + "/menubar-refresh.sh")
+        let cache = MenubarStatusCache(statusPath: path)
 
         let result = cache.readBadgePayload(maxAgeSeconds: 3600)
 
@@ -44,7 +44,7 @@ struct MenubarStatusCacheTests {
     @Test("returns nil for a missing file")
     func missingFileReturnsNil() {
         let dir = tempDir()
-        let cache = MenubarStatusCache(statusPath: dir + "/nope.json", scriptPath: dir + "/s.sh")
+        let cache = MenubarStatusCache(statusPath: dir + "/nope.json")
         #expect(cache.readBadgePayload(maxAgeSeconds: 3600) == nil)
     }
 
@@ -53,7 +53,7 @@ struct MenubarStatusCacheTests {
         let dir = tempDir()
         let path = dir + "/menubar-status.json"
         try Data("{ not json".utf8).write(to: URL(fileURLWithPath: path))
-        let cache = MenubarStatusCache(statusPath: path, scriptPath: dir + "/s.sh")
+        let cache = MenubarStatusCache(statusPath: path)
         #expect(cache.readBadgePayload(maxAgeSeconds: 3600) == nil)
     }
 
@@ -66,7 +66,20 @@ struct MenubarStatusCacheTests {
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-7200)], ofItemAtPath: path
         )
-        let cache = MenubarStatusCache(statusPath: path, scriptPath: dir + "/s.sh")
+        let cache = MenubarStatusCache(statusPath: path)
         #expect(cache.readBadgePayload(maxAgeSeconds: 3600) == nil)
+    }
+
+    @Test("writeStatus round-trips through readBadgePayload")
+    func writeStatusRoundTrips() throws {
+        let dir = tempDir()
+        let path = dir + "/menubar-status.json"
+        let cache = MenubarStatusCache(statusPath: path)
+
+        let payload = try JSONDecoder().decode(MenubarPayload.self, from: validPayloadJSON(cost: 13.5))
+        try cache.writeStatus(payload)
+
+        let result = cache.readBadgePayload(maxAgeSeconds: 3600)
+        #expect(result?.payload.current.cost == 13.5)
     }
 }
