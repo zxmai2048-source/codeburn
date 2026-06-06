@@ -2,6 +2,7 @@ import { homedir } from 'node:os'
 import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange } from './types.js'
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDays } from './parser.js'
+import { getLocalModelSavingsConfigHash, getShortModelName } from './models.js'
 import { getAllProviders } from './providers/index.js'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from './day-aggregator.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
@@ -10,8 +11,8 @@ import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFI
 
 export function buildPeriodData(label: string, projects: ProjectSummary[]): PeriodData {
   const sessions = projects.flatMap(p => p.sessions)
-  const catTotals: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = {}
-  const modelTotals: Record<string, { calls: number; cost: number }> = {}
+  const catTotals: Record<string, { turns: number; cost: number; savingsUSD: number; editTurns: number; oneShotTurns: number }> = {}
+  const modelTotals: Record<string, { calls: number; cost: number; savingsUSD: number }> = {}
   let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0
 
   for (const sess of sessions) {
@@ -20,22 +21,25 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
     cacheReadTokens += sess.totalCacheReadTokens
     cacheWriteTokens += sess.totalCacheWriteTokens
     for (const [cat, d] of Object.entries(sess.categoryBreakdown)) {
-      if (!catTotals[cat]) catTotals[cat] = { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 }
+      if (!catTotals[cat]) catTotals[cat] = { turns: 0, cost: 0, savingsUSD: 0, editTurns: 0, oneShotTurns: 0 }
       catTotals[cat].turns += d.turns
       catTotals[cat].cost += d.costUSD
+      catTotals[cat].savingsUSD += d.savingsUSD
       catTotals[cat].editTurns += d.editTurns
       catTotals[cat].oneShotTurns += d.oneShotTurns
     }
     for (const [model, d] of Object.entries(sess.modelBreakdown)) {
-      if (!modelTotals[model]) modelTotals[model] = { calls: 0, cost: 0 }
+      if (!modelTotals[model]) modelTotals[model] = { calls: 0, cost: 0, savingsUSD: 0 }
       modelTotals[model].calls += d.calls
       modelTotals[model].cost += d.costUSD
+      modelTotals[model].savingsUSD += d.savingsUSD
     }
   }
 
   return {
     label,
     cost: projects.reduce((s, p) => s + p.totalCostUSD, 0),
+    savingsUSD: projects.reduce((s, p) => s + p.totalSavingsUSD, 0),
     calls: projects.reduce((s, p) => s + p.totalApiCalls, 0),
     sessions: projects.reduce((s, p) => s + p.sessions.length, 0),
     inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
@@ -53,6 +57,7 @@ async function hydrateCache(): Promise<DailyCache> {
     return await ensureCacheHydrated(
       (range) => parseAllSessions(range, 'all'),
       aggregateProjectsIntoDays,
+      getLocalModelSavingsConfigHash(),
     )
   } catch (err) {
     // Previously swallowed silently, which turned any backfill failure into an
@@ -202,6 +207,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
         .map(([name, m]) => ({
           name,
           cost: m.cost,
+          savingsUSD: m.savingsUSD,
           calls: m.calls,
           inputTokens: m.inputTokens,
           outputTokens: m.outputTokens,
@@ -209,6 +215,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       return {
         date: d.date,
         cost: d.cost,
+        savingsUSD: d.savingsUSD,
         calls: d.calls,
         inputTokens: d.inputTokens,
         outputTokens: d.outputTokens,
@@ -218,12 +225,13 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       }
     })
   } else {
-    const emptyModels = [] as { name: string; cost: number; calls: number; inputTokens: number; outputTokens: number }[]
+    const emptyModels = [] as { name: string; cost: number; savingsUSD: number; calls: number; inputTokens: number; outputTokens: number }[]
     const historyFromCache = allCacheDays.map(d => {
-      const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
+      const prov = d.providers[pf] ?? { calls: 0, cost: 0, savingsUSD: 0 }
       return {
         date: d.date,
         cost: prov.cost,
+        savingsUSD: prov.savingsUSD,
         calls: prov.calls,
         inputTokens: 0,
         outputTokens: 0,
@@ -235,10 +243,11 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     const todayFromParse = aggregateProjectsIntoDays(scanProjects)
       .filter(d => d.date === todayStr)
       .map(d => {
-        const prov = d.providers[pf] ?? { calls: 0, cost: 0 }
+        const prov = d.providers[pf] ?? { calls: 0, cost: 0, savingsUSD: 0 }
         return {
           date: d.date,
           cost: prov.cost,
+          savingsUSD: prov.savingsUSD,
           calls: prov.calls,
           inputTokens: 0,
           outputTokens: 0,
@@ -260,18 +269,20 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
   currentData.projects = scanProjects.map(p => ({
     name: friendlyProject(p),
     cost: p.totalCostUSD,
+    savingsUSD: p.totalSavingsUSD,
     sessions: p.sessions.length,
     sessionDetails: [...p.sessions]
       .sort((a, b) => b.totalCostUSD - a.totalCostUSD)
       .slice(0, 10)
       .map(s => ({
         cost: s.totalCostUSD,
+        savingsUSD: s.totalSavingsUSD,
         calls: s.apiCalls,
         inputTokens: s.totalInputTokens,
         outputTokens: s.totalOutputTokens,
         date: s.firstTimestamp?.split('T')[0] ?? '',
         models: Object.entries(s.modelBreakdown)
-          .map(([name, m]) => ({ name, cost: m.costUSD }))
+          .map(([name, m]) => ({ name, cost: m.costUSD, savingsUSD: m.savingsUSD }))
           .sort((a, b) => b.cost - a.cost)
           .slice(0, 3),
       })),
@@ -304,10 +315,11 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     p.sessions.map(s => ({
       project: friendlyProject(p),
       cost: s.totalCostUSD,
+      savingsUSD: s.totalSavingsUSD,
       calls: s.apiCalls,
       date: s.firstTimestamp?.split('T')[0] ?? '',
     }))
-  ).sort((a, b) => b.cost - a.cost).slice(0, 5)
+  ).sort((a, b) => (b.cost + b.savingsUSD) - (a.cost + a.savingsUSD)).slice(0, 5)
 
   // Routing waste: find cheapest reliable model (≥90% 1-shot, ≥5 edits),
   // then compute how much each pricier model overpaid.
@@ -345,17 +357,49 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     const skillMap: Record<string, { turns: number; cost: number }> = {}
     const subagentMap: Record<string, { calls: number; cost: number }> = {}
     const mcpMap: Record<string, number> = {}
+    // Local-model savings rollup: avoided spend (cost forced to $0, baseline
+    // recorded) grouped by model and provider. Mirrors the per-call savingsUSD
+    // that applyLocalModelSavings stamps in the parser.
+    const savingsByModel = new Map<string, { calls: number; actualUSD: number; savingsUSD: number; baselineModel: string; inputTokens: number; outputTokens: number }>()
+    const savingsByProvider = new Map<string, { calls: number; savingsUSD: number }>()
+    let totalSavings = 0
+    let totalSavingsCalls = 0
     for (const p of scanProjects) for (const s of p.sessions) {
       for (const [t, d] of Object.entries(s.toolBreakdown)) { if (!t.startsWith('lang:')) toolMap[t] = (toolMap[t] ?? 0) + d.calls }
       for (const [sk, d] of Object.entries(s.skillBreakdown)) { const e = skillMap[sk] ?? { turns: 0, cost: 0 }; e.turns += d.turns; e.cost += d.costUSD; skillMap[sk] = e }
       for (const [sa, d] of Object.entries(s.subagentBreakdown)) { const e = subagentMap[sa] ?? { calls: 0, cost: 0 }; e.calls += d.calls; e.cost += d.costUSD; subagentMap[sa] = e }
       for (const [m, d] of Object.entries(s.mcpBreakdown)) { mcpMap[m] = (mcpMap[m] ?? 0) + d.calls }
+      for (const turn of s.turns) for (const call of turn.assistantCalls) {
+        if (!call.savingsUSD || call.savingsUSD <= 0) continue
+        totalSavings += call.savingsUSD
+        totalSavingsCalls += 1
+        const modelKey = getShortModelName(call.model)
+        const acc = savingsByModel.get(modelKey) ?? { calls: 0, actualUSD: 0, savingsUSD: 0, baselineModel: call.savingsBaselineModel ?? '', inputTokens: 0, outputTokens: 0 }
+        acc.calls += 1
+        acc.actualUSD += call.costUSD
+        acc.savingsUSD += call.savingsUSD
+        acc.baselineModel = acc.baselineModel || (call.savingsBaselineModel ?? '')
+        acc.inputTokens += call.usage.inputTokens
+        acc.outputTokens += call.usage.outputTokens
+        savingsByModel.set(modelKey, acc)
+        const provAcc = savingsByProvider.get(call.provider) ?? { calls: 0, savingsUSD: 0 }
+        provAcc.calls += 1
+        provAcc.savingsUSD += call.savingsUSD
+        savingsByProvider.set(call.provider, provAcc)
+      }
+    }
+    const localModelSavings = {
+      totalUSD: totalSavings,
+      calls: totalSavingsCalls,
+      byModel: Array.from(savingsByModel.entries()).sort(([, a], [, b]) => b.savingsUSD - a.savingsUSD).slice(0, 5).map(([name, d]) => ({ name, ...d })),
+      byProvider: Array.from(savingsByProvider.entries()).sort(([, a], [, b]) => b.savingsUSD - a.savingsUSD).slice(0, 5).map(([name, d]) => ({ name, ...d })),
     }
     return {
       tools: Object.entries(toolMap).sort(([, a], [, b]) => b - a).slice(0, 10).map(([name, calls]) => ({ name, calls })),
       skills: Object.entries(skillMap).sort(([, a], [, b]) => b.cost - a.cost).slice(0, 10).map(([name, d]) => ({ name, ...d })),
       subagents: Object.entries(subagentMap).sort(([, a], [, b]) => b.cost - a.cost).slice(0, 10).map(([name, d]) => ({ name, ...d })),
       mcpServers: Object.entries(mcpMap).sort(([, a], [, b]) => b - a).slice(0, 10).map(([name, calls]) => ({ name, calls })),
+      localModelSavings,
     }
   })()
 

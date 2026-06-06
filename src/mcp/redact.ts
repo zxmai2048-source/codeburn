@@ -26,7 +26,7 @@ export function pseudonym(name: string): string {
   return `project-${createHash('sha256').update(getSalt() + name).digest('hex').slice(0, 6)}`
 }
 
-function redactSessionDetails(details: Array<{ cost: number; calls: number; inputTokens: number; outputTokens: number; date: string; models: Array<{ name: string; cost: number }> }>): Array<{ cost: number; calls: number; inputTokens: number; outputTokens: number; date: string; models: Array<{ name: string; cost: number }> }> {
+function redactSessionDetails(details: Array<{ cost: number; savingsUSD: number; calls: number; inputTokens: number; outputTokens: number; date: string; models: Array<{ name: string; cost: number; savingsUSD: number }> }>): Array<{ cost: number; savingsUSD: number; calls: number; inputTokens: number; outputTokens: number; date: string; models: Array<{ name: string; cost: number; savingsUSD: number }> }> {
   return details.map(d => ({ ...d, date: '', models: [] }))
 }
 

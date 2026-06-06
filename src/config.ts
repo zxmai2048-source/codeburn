@@ -29,10 +29,16 @@ export type CodeburnConfig = {
   modelAliases?: Record<string, string>
   // Extra Claude config directories to aggregate usage across (e.g. work /
   // personal accounts). Honored by getClaudeConfigDirs() below the
-  // CLAUDE_CONFIG_DIRS/CLAUDE_CONFIG_DIR env vars. Lets the macOS menubar — a
-  // GUI app that doesn't inherit the user's shell env — configure multi-account
+  // CLAUDE_CONFIG_DIRS/CLAUDE_CONFIG_DIR env vars. Lets the macOS menubar (a
+  // GUI app that doesn't inherit the user's shell env) configure multi-account
   // aggregation without injecting env into every spawned subprocess.
   claudeConfigDirs?: string[]
+  // Map raw local-model names (e.g. "llama3.1:8b") to the paid model we would
+  // price the call against (e.g. "gpt-4o"). The local call still costs $0; we
+  // track what the same tokens would have cost on the baseline so the dashboard
+  // can show "saved $X by running locally". Distinct from modelAliases which
+  // rewrites actual spend.
+  localModelSavings?: Record<string, string>
 }
 
 function getConfigDir(): string {

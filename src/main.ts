@@ -1,7 +1,7 @@
 import { Command } from 'commander'
 import { installMenubarApp } from './menubar-installer.js'
 import { exportCsv, exportJson, type PeriodExport } from './export.js'
-import { loadPricing, setModelAliases } from './models.js'
+import { loadPricing, setModelAliases, setLocalModelSavings } from './models.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDateRange, clearSessionCache } from './parser.js'
 import { convertCost } from './currency.js'
 import { renderStatusBar } from './format.js'
@@ -149,6 +149,7 @@ program.hook('preAction', async (thisCommand) => {
   }
   const config = await readConfig()
   setModelAliases(config.modelAliases ?? {})
+  setLocalModelSavings(config.localModelSavings ?? {})
   if (thisCommand.opts<{ verbose?: boolean }>().verbose) {
     process.env['CODEBURN_VERBOSE'] = '1'
   }
@@ -160,6 +161,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
   const { code } = getCurrency()
 
   const totalCostUSD = projects.reduce((s, p) => s + p.totalCostUSD, 0)
+  const totalSavingsUSD = projects.reduce((s, p) => s + p.totalSavingsUSD, 0)
   const totalCalls = projects.reduce((s, p) => s + p.totalApiCalls, 0)
   const totalSessions = projects.reduce((s, p) => s + p.sessions.length, 0)
   const totalInput = sessions.reduce((s, sess) => s + sess.totalInputTokens, 0)
@@ -177,7 +179,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
   // `turns`, edit turns count for `editTurns`, edit turns with zero retries
   // count for `oneShotTurns`. Issue #279 — daily-resolution efficiency
   // dashboards need this without re-deriving from activity-level rollups.
-  const dailyMap: Record<string, { cost: number; calls: number; turns: number; editTurns: number; oneShotTurns: number }> = {}
+  const dailyMap: Record<string, { cost: number; savings: number; calls: number; turns: number; editTurns: number; oneShotTurns: number }> = {}
   for (const sess of sessions) {
     for (const turn of sess.turns) {
       // Prefer the user-message timestamp on the turn; fall back to the first
@@ -188,7 +190,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       const ts = turn.timestamp || turn.assistantCalls[0]?.timestamp
       if (!ts) { continue }
       const day = dateKey(ts)
-      if (!dailyMap[day]) { dailyMap[day] = { cost: 0, calls: 0, turns: 0, editTurns: 0, oneShotTurns: 0 } }
+      if (!dailyMap[day]) { dailyMap[day] = { cost: 0, savings: 0, calls: 0, turns: 0, editTurns: 0, oneShotTurns: 0 } }
       dailyMap[day].turns += 1
       if (turn.hasEdits) {
         dailyMap[day].editTurns += 1
@@ -196,6 +198,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       }
       for (const call of turn.assistantCalls) {
         dailyMap[day].cost += call.costUSD
+        dailyMap[day].savings += call.savingsUSD ?? 0
         dailyMap[day].calls += 1
       }
     }
@@ -203,6 +206,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
   const daily = Object.entries(dailyMap).sort().map(([date, d]) => ({
     date,
     cost: convertCost(d.cost),
+    savings: convertCost(d.savings),
     calls: d.calls,
     turns: d.turns,
     editTurns: d.editTurns,
@@ -219,6 +223,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
     name: p.project,
     path: p.projectPath,
     cost: convertCost(p.totalCostUSD),
+    savings: convertCost(p.totalSavingsUSD),
     avgCostPerSession: p.sessions.length > 0
       ? convertCost(p.totalCostUSD / p.sessions.length)
       : null,
@@ -226,27 +231,51 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
     sessions: p.sessions.length,
   }))
 
-  const modelMap: Record<string, { calls: number; cost: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }> = {}
+  const modelMap: Record<string, { calls: number; cost: number; savings: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; baselineModel: string }> = {}
   const modelEfficiency = aggregateModelEfficiency(projects)
   for (const sess of sessions) {
     for (const [model, d] of Object.entries(sess.modelBreakdown)) {
-      if (!modelMap[model]) { modelMap[model] = { calls: 0, cost: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } }
+      if (!modelMap[model]) { modelMap[model] = { calls: 0, cost: 0, savings: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, baselineModel: '' } }
       modelMap[model].calls += d.calls
       modelMap[model].cost += d.costUSD
+      modelMap[model].savings += d.savingsUSD
       modelMap[model].inputTokens += d.tokens.inputTokens
       modelMap[model].outputTokens += d.tokens.outputTokens
       modelMap[model].cacheReadTokens += d.tokens.cacheReadInputTokens
       modelMap[model].cacheWriteTokens += d.tokens.cacheCreationInputTokens
     }
   }
+  // Pull the active baseline model name out of the savings config so the
+  // report can show what the local calls were mapped against without
+  // forcing the consumer to cross-reference a separate file. Empty when
+  // no savings are configured for this period.
+  for (const [model, acc] of Object.entries(modelMap)) {
+    if (acc.savings <= 0) continue
+    for (const sess of sessions) {
+      const bucket = sess.modelBreakdown[model]
+      if (!bucket || bucket.savingsUSD <= 0) continue
+      for (const turn of sess.turns) {
+        for (const call of turn.assistantCalls) {
+          if (call.model === model && call.savingsBaselineModel) {
+            acc.baselineModel = call.savingsBaselineModel
+            break
+          }
+        }
+        if (acc.baselineModel) break
+      }
+      if (acc.baselineModel) break
+    }
+  }
   const models = Object.entries(modelMap)
-    .sort(([, a], [, b]) => b.cost - a.cost)
-    .map(([name, { cost, ...rest }]) => {
+    .sort(([, a], [, b]) => (b.cost + b.savings) - (a.cost + a.savings))
+    .map(([name, { cost, savings, baselineModel, ...rest }]) => {
       const efficiency = modelEfficiency.get(name)
       return {
         name,
         ...rest,
         cost: convertCost(cost),
+        savings: convertCost(savings),
+        savingsBaselineModel: baselineModel,
         editTurns: efficiency?.editTurns ?? 0,
         oneShotTurns: efficiency?.oneShotTurns ?? 0,
         oneShotRate: efficiency?.oneShotRate ?? null,
@@ -257,21 +286,23 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       }
     })
 
-  const catMap: Record<string, { turns: number; cost: number; editTurns: number; oneShotTurns: number }> = {}
+  const catMap: Record<string, { turns: number; cost: number; savings: number; editTurns: number; oneShotTurns: number }> = {}
   for (const sess of sessions) {
     for (const [cat, d] of Object.entries(sess.categoryBreakdown)) {
-      if (!catMap[cat]) { catMap[cat] = { turns: 0, cost: 0, editTurns: 0, oneShotTurns: 0 } }
+      if (!catMap[cat]) { catMap[cat] = { turns: 0, cost: 0, savings: 0, editTurns: 0, oneShotTurns: 0 } }
       catMap[cat].turns += d.turns
       catMap[cat].cost += d.costUSD
+      catMap[cat].savings += d.savingsUSD
       catMap[cat].editTurns += d.editTurns
       catMap[cat].oneShotTurns += d.oneShotTurns
     }
   }
   const activities = Object.entries(catMap)
-    .sort(([, a], [, b]) => b.cost - a.cost)
+    .sort(([, a], [, b]) => (b.cost + b.savings) - (a.cost + a.savings))
     .map(([cat, d]) => ({
       category: CATEGORY_LABELS[cat as TaskCategory] ?? cat,
       cost: convertCost(d.cost),
+      savings: convertCost(d.savings),
       turns: d.turns,
       editTurns: d.editTurns,
       oneShotTurns: d.oneShotTurns,
@@ -281,8 +312,8 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
   const toolMap: Record<string, number> = {}
   const mcpMap: Record<string, number> = {}
   const bashMap: Record<string, number> = {}
-  const skillMap: Record<string, { turns: number; cost: number }> = {}
-  const subagentMap: Record<string, { calls: number; cost: number }> = {}
+  const skillMap: Record<string, { turns: number; cost: number; savings: number }> = {}
+  const subagentMap: Record<string, { calls: number; cost: number; savings: number }> = {}
   for (const sess of sessions) {
     for (const [tool, d] of Object.entries(sess.toolBreakdown)) {
       toolMap[tool] = (toolMap[tool] ?? 0) + d.calls
@@ -294,14 +325,16 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
       bashMap[cmd] = (bashMap[cmd] ?? 0) + d.calls
     }
     for (const [skill, d] of Object.entries(sess.skillBreakdown)) {
-      if (!skillMap[skill]) skillMap[skill] = { turns: 0, cost: 0 }
+      if (!skillMap[skill]) skillMap[skill] = { turns: 0, cost: 0, savings: 0 }
       skillMap[skill].turns += d.turns
       skillMap[skill].cost += d.costUSD
+      skillMap[skill].savings += d.savingsUSD
     }
     for (const [sat, d] of Object.entries(sess.subagentBreakdown)) {
-      if (!subagentMap[sat]) subagentMap[sat] = { calls: 0, cost: 0 }
+      if (!subagentMap[sat]) subagentMap[sat] = { calls: 0, cost: 0, savings: 0 }
       subagentMap[sat].calls += d.calls
       subagentMap[sat].cost += d.costUSD
+      subagentMap[sat].savings += d.savingsUSD
     }
   }
 
@@ -309,8 +342,15 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
     Object.entries(m).sort(([, a], [, b]) => b - a).map(([name, calls]) => ({ name, calls }))
 
   const topSessions = projects
-    .flatMap(p => p.sessions.map(s => ({ project: p.project, sessionId: s.sessionId, date: s.firstTimestamp ? dateKey(s.firstTimestamp) : null, cost: convertCost(s.totalCostUSD), calls: s.apiCalls })))
-    .sort((a, b) => b.cost - a.cost)
+    .flatMap(p => p.sessions.map(s => ({
+      project: p.project,
+      sessionId: s.sessionId,
+      date: s.firstTimestamp ? dateKey(s.firstTimestamp) : null,
+      cost: convertCost(s.totalCostUSD),
+      savings: convertCost(s.totalSavingsUSD),
+      calls: s.apiCalls,
+    })))
+    .sort((a, b) => (b.cost + b.savings) - (a.cost + a.savings))
     .slice(0, 5)
 
   return {
@@ -320,6 +360,7 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
     periodKey,
     overview: {
       cost: convertCost(totalCostUSD),
+      savings: convertCost(totalSavingsUSD),
       calls: totalCalls,
       sessions: totalSessions,
       cacheHitPercent,
@@ -337,8 +378,8 @@ function buildJsonReport(projects: ProjectSummary[], period: string, periodKey: 
     tools: sortedMap(toolMap),
     mcpServers: sortedMap(mcpMap),
     shellCommands: sortedMap(bashMap),
-    skills: Object.entries(skillMap).sort(([, a], [, b]) => b.cost - a.cost).map(([name, d]) => ({ name, turns: d.turns, cost: convertCost(d.cost) })),
-    subagents: Object.entries(subagentMap).sort(([, a], [, b]) => b.cost - a.cost).map(([name, d]) => ({ name, calls: d.calls, cost: convertCost(d.cost) })),
+    skills: Object.entries(skillMap).sort(([, a], [, b]) => (b.cost + b.savings) - (a.cost + a.savings)).map(([name, d]) => ({ name, turns: d.turns, cost: convertCost(d.cost), savings: convertCost(d.savings) })),
+    subagents: Object.entries(subagentMap).sort(([, a], [, b]) => (b.cost + b.savings) - (a.cost + a.savings)).map(([name, d]) => ({ name, calls: d.calls, cost: convertCost(d.cost), savings: convertCost(d.savings) })),
     topSessions,
   }
 }
@@ -450,14 +491,25 @@ program
       const { code, rate } = getCurrency()
       const payload: {
         currency: string
-        today: { cost: number; calls: number }
-        month: { cost: number; calls: number }
+        today: { cost: number; savings: number; calls: number }
+        month: { cost: number; savings: number; calls: number }
+        localModelSavings?: { today: number; month: number; callsToday: number; callsMonth: number }
         plan?: JsonPlanSummary
         plans?: JsonPlanSummaryMap
       } = {
         currency: code,
-        today: { cost: Math.round(todayData.cost * rate * 100) / 100, calls: todayData.calls },
-        month: { cost: Math.round(monthData.cost * rate * 100) / 100, calls: monthData.calls },
+        today: { cost: Math.round(todayData.cost * rate * 100) / 100, savings: Math.round(todayData.savingsUSD * rate * 100) / 100, calls: todayData.calls },
+        month: { cost: Math.round(monthData.cost * rate * 100) / 100, savings: Math.round(monthData.savingsUSD * rate * 100) / 100, calls: monthData.calls },
+      }
+      const savingsCallsToday = todayProjects.reduce((s, p) => s + p.sessions.reduce((s2, sess) => s2 + sess.turns.reduce((s3, turn) => s3 + turn.assistantCalls.reduce((s4, c) => s4 + (c.savingsUSD && c.savingsUSD > 0 ? 1 : 0), 0), 0), 0), 0)
+      const savingsCallsMonth = monthProjects.reduce((s, p) => s + p.sessions.reduce((s2, sess) => s2 + sess.turns.reduce((s3, turn) => s3 + turn.assistantCalls.reduce((s4, c) => s4 + (c.savingsUSD && c.savingsUSD > 0 ? 1 : 0), 0), 0), 0), 0)
+      if (todayData.savingsUSD > 0 || monthData.savingsUSD > 0) {
+        payload.localModelSavings = {
+          today: payload.today.savings,
+          month: payload.month.savings,
+          callsToday: savingsCallsToday,
+          callsMonth: savingsCallsMonth,
+        }
       }
       console.log(JSON.stringify(await attachPlanSummaries(payload)))
       return
@@ -681,6 +733,65 @@ program
     config.modelAliases = aliases
     await saveConfig(config)
     console.log(`\n  Alias saved: ${from} -> ${to}`)
+    console.log(`  Config: ${getConfigFilePath()}\n`)
+  })
+
+program
+  .command('model-savings [local] [baseline]')
+  .description('Track a local model as "savings" rather than cost. Maps a local-model name to a paid baseline so the dashboard can show what the same tokens would have cost on the baseline (e.g. codeburn model-savings "llama3.1:8b" gpt-4o). The local call itself still costs $0 — actual cost is left untouched.')
+  .option('--remove <local>', 'Remove a savings mapping for the given local model')
+  .option('--list', 'List configured savings mappings')
+  .action(async (local?: string, baseline?: string, opts?: { remove?: string; list?: boolean }) => {
+    const config = await readConfig()
+    const mappings = { ...(config.localModelSavings ?? {}) }
+
+    if (opts?.list || (!local && !opts?.remove)) {
+      const entries = Object.entries(mappings)
+      if (entries.length === 0) {
+        console.log('\n  No local-model savings mappings configured.')
+        console.log(`  Config: ${getConfigFilePath()}`)
+        console.log('  Add one with: codeburn model-savings <local-model> <baseline-model>\n')
+      } else {
+        console.log('\n  Local-model savings mappings:')
+        for (const [src, dst] of entries) {
+          console.log(`    ${src} -> ${dst}`)
+        }
+        console.log(`  Config: ${getConfigFilePath()}\n`)
+      }
+      return
+    }
+
+    if (opts?.remove) {
+      if (!(opts.remove in mappings)) {
+        console.error(`\n  No savings mapping found for: ${opts.remove}\n`)
+        process.exitCode = 1
+        return
+      }
+      delete mappings[opts.remove]
+      config.localModelSavings = Object.keys(mappings).length > 0 ? mappings : undefined
+      await saveConfig(config)
+      console.log(`\n  Removed savings mapping: ${opts.remove}\n`)
+      return
+    }
+
+    if (!local || !baseline) {
+      console.error('\n  Usage: codeburn model-savings <local-model> <baseline-model>\n')
+      process.exitCode = 1
+      return
+    }
+
+    mappings[local] = baseline
+    config.localModelSavings = mappings
+    await saveConfig(config)
+
+    // Warn when the same model is also in modelAliases so the user is
+    // not surprised that `savings` wins for actual cost.
+    if (config.modelAliases && Object.hasOwn(config.modelAliases, local)) {
+      console.log(`\n  Note: ${local} is also in modelAliases (-> ${config.modelAliases[local]}).`)
+      console.log('  Local-model savings take precedence: the call is treated as $0 actual cost and the baseline is used for counterfactual savings.')
+    }
+
+    console.log(`\n  Savings mapping saved: ${local} -> ${baseline}`)
     console.log(`  Config: ${getConfigFilePath()}\n`)
   })
 
