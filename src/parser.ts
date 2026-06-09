@@ -1019,15 +1019,19 @@ function getMessageId(entry: JournalEntry): string | null {
   return msg?.id ?? null
 }
 
-function positiveNumber(n: number | undefined): number {
-  return n !== undefined && Number.isFinite(n) && n > 0 ? n : 0
+export function safeNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+export function isPositiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function extractClaudeCacheCreation(usage: AssistantMessageContent['usage']): { totalTokens: number; oneHourTokens: number } {
-  const legacyTotal = positiveNumber(usage.cache_creation_input_tokens)
+  const legacyTotal = safeNumber(usage.cache_creation_input_tokens)
   const cacheCreation = usage.cache_creation
-  const fiveMinuteTokens = positiveNumber(cacheCreation?.ephemeral_5m_input_tokens)
-  const oneHourTokens = positiveNumber(cacheCreation?.ephemeral_1h_input_tokens)
+  const fiveMinuteTokens = safeNumber(cacheCreation?.ephemeral_5m_input_tokens)
+  const oneHourTokens = safeNumber(cacheCreation?.ephemeral_1h_input_tokens)
   const splitTotal = fiveMinuteTokens + oneHourTokens
 
   if (splitTotal === 0) return { totalTokens: legacyTotal, oneHourTokens: 0 }
@@ -1692,7 +1696,7 @@ function providerCallToCachedCall(call: ParsedProviderCall): CachedCall {
       webSearchRequests: call.webSearchRequests,
       cacheCreationOneHourTokens: 0,
     },
-    costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity') ? call.costUSD : undefined,
+    costUSD: (call.provider === 'mistral-vibe' || call.provider === 'antigravity' || call.provider === 'devin') ? call.costUSD : undefined,
     speed: call.speed,
     timestamp: call.timestamp,
     tools: call.tools,
@@ -1862,6 +1866,11 @@ function cachedFileNeedsProviderReparse(providerName: string, sourcePath: string
   // Antigravity data comes from the live server, not from the conversation file.
   // A 0-turn cache entry may just mean the server was unavailable last run.
   if (providerName === 'antigravity') return shouldReparseAntigravitySource(sourcePath, cached.turns.length)
+
+  // Devin transcript usage is enriched from sessions.db. The cache fingerprint
+  // only tracks the transcript JSON, so reparse to pick up DB-side project,
+  // title, model, and timestamp changes.
+  if (providerName === 'devin') return true
 
   if (providerName !== 'gemini') return false
 
