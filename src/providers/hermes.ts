@@ -11,6 +11,7 @@ type HermesSessionRow = {
   id: string
   source: string | null
   model: string | null
+  cwd: string | null
   billing_provider: string | null
   input_tokens: number | null
   output_tokens: number | null
@@ -294,6 +295,7 @@ async function discoverFromDb(dbPath: string, profile: string): Promise<SessionS
       provider: 'hermes',
     }))
   } catch (err) {
+    if (isSqliteBusyError(err)) throw err
     process.stderr.write(`codeburn: error querying Hermes database: ${err instanceof Error ? err.message : err}\n`)
     return []
   } finally {
@@ -329,6 +331,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
           `SELECT id,
                   ${nullableColumn(columns, 'source')},
                   ${nullableColumn(columns, 'model')},
+                  ${nullableColumn(columns, 'cwd')},
                   ${nullableColumn(columns, 'billing_provider')},
                   ${numberColumn(columns, 'input_tokens')},
                   ${numberColumn(columns, 'output_tokens')},
@@ -374,7 +377,13 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
 
         const model = row.model ?? 'unknown'
         const { tools, toolSequence, bashCommands } = collectTools(messages)
-        const projectInfo = inferProject(messages, sanitizeProject(profile))
+        // Hermes records the session's working directory in sessions.cwd.
+        // Prefer it; fall back to scraping a "Current working directory:" line
+        // from the transcript (older builds), then to the profile name.
+        const cwd = row.cwd?.trim()
+        const projectInfo = cwd
+          ? { project: sanitizeProject(cwd), projectPath: cwd }
+          : inferProject(messages, sanitizeProject(profile))
         const timestamp = parseTimestamp(row.started_at)
         const dedupKey = `hermes:${profile}:${row.id}`
         if (seenKeys.has(dedupKey)) return
@@ -391,10 +400,14 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
           cacheReadTokens,
           0,
         )
-        const costUSD =
+        const recordedCost =
           (row.actual_cost_usd ?? 0) > 0 ? row.actual_cost_usd!
           : (row.estimated_cost_usd ?? 0) > 0 ? row.estimated_cost_usd!
-          : calculatedCost
+          : null
+        // When Hermes stored no cost (e.g. subscription-billed sessions), the
+        // figure is our LiteLLM-priced estimate from the session token totals.
+        const costUSD = recordedCost ?? calculatedCost
+        const costIsEstimated = recordedCost === null
 
         result = {
           provider: 'hermes',
@@ -407,6 +420,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
           reasoningTokens,
           webSearchRequests: 0,
           costUSD,
+          costIsEstimated,
           tools,
           bashCommands,
           timestamp,
@@ -420,6 +434,9 @@ function createParser(source: SessionSource, seenKeys: Set<string>, hermesHome: 
           projectPath: projectInfo.projectPath,
         }
       } catch (err) {
+        // A transient lock on the live state.db must propagate so the caller
+        // retries, not get swallowed into an empty (negatively cached) result.
+        if (isSqliteBusyError(err)) throw err
         process.stderr.write(`codeburn: error querying Hermes database: ${err instanceof Error ? err.message : err}\n`)
         return
       } finally {

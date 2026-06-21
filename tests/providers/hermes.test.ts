@@ -48,6 +48,7 @@ function createHermesDb(homeDir: string): string {
       id TEXT PRIMARY KEY,
       source TEXT,
       model TEXT,
+      cwd TEXT,
       billing_provider TEXT,
       billing_base_url TEXT,
       billing_mode TEXT,
@@ -120,6 +121,7 @@ function insertSession(db: TestDb, values: {
   id: string
   source?: string
   model?: string
+  cwd?: string | null
   billingProvider?: string
   inputTokens: number
   outputTokens: number
@@ -135,14 +137,15 @@ function insertSession(db: TestDb, values: {
 }): void {
   db.prepare(
     `INSERT INTO sessions (
-      id, source, model, billing_provider, input_tokens, output_tokens,
+      id, source, model, cwd, billing_provider, input_tokens, output_tokens,
       cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd,
       actual_cost_usd, api_call_count, tool_call_count, started_at, title
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     values.id,
     values.source ?? 'cli',
     values.model ?? 'gpt-5.5',
+    values.cwd ?? null,
     values.billingProvider ?? 'openai-codex',
     values.inputTokens,
     values.outputTokens,
@@ -476,5 +479,68 @@ skipUnlessSqlite('hermes provider', () => {
       project: 'C--AI_LAB-OPENCLAW',
       projectPath: 'C:\\AI_LAB\\OPENCLAW',
     })
+  })
+
+  it('groups by the sessions.cwd column when present, ahead of message scraping', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'cwd-session',
+        cwd: '/Users/me/projects/codeburn',
+        inputTokens: 30,
+        outputTokens: 10,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        startedAt: 1779549200,
+      })
+      db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)')
+        .run('cwd-session', 'user', 'Current working directory: /tmp/decoy\nbuild it', 1779549201)
+    })
+
+    const calls = await collectCalls(tmpDir, `${dbPath}#hermes-session=cwd-session`)
+    expect(calls[0]).toMatchObject({
+      project: 'Users-me-projects-codeburn',
+      projectPath: '/Users/me/projects/codeburn',
+    })
+  })
+
+  it('flags estimated cost only when Hermes recorded none', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'no-cost',
+        inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+        startedAt: 1779549200,
+      })
+      insertSession(db, {
+        id: 'recorded-cost',
+        actualCost: 1.23,
+        inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+        startedAt: 1779549300,
+      })
+    })
+
+    const noCost = await collectCalls(tmpDir, `${dbPath}#hermes-session=no-cost`)
+    expect(noCost[0]!.costIsEstimated).toBe(true)
+
+    const recorded = await collectCalls(tmpDir, `${dbPath}#hermes-session=recorded-cost`)
+    expect(recorded[0]).toMatchObject({ costUSD: 1.23, costIsEstimated: false })
+  })
+
+  it('counts tool-result messages by their tool_name', async () => {
+    const dbPath = createHermesDb(tmpDir)
+    withTestDb(dbPath, (db) => {
+      insertSession(db, {
+        id: 'tool-result-session',
+        inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+        startedAt: 1779549200,
+      })
+      db.prepare('INSERT INTO messages (session_id, role, content, tool_name, timestamp) VALUES (?, ?, ?, ?, ?)')
+        .run('tool-result-session', 'tool', null, 'read_file', 1779549201)
+    })
+
+    const calls = await collectCalls(tmpDir, `${dbPath}#hermes-session=tool-result-session`)
+    expect(calls[0]!.tools).toContain('Read')
   })
 })
