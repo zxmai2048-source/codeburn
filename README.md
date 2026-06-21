@@ -14,6 +14,7 @@
     <a href="https://github.com/getagentseal/codeburn/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/codeburn.svg?color=F97316" alt="license" /></a>
     <a href="https://github.com/getagentseal/codeburn"><img src="https://img.shields.io/badge/node-%3E%3D22-F97316.svg" alt="node version" /></a>
     <a href="https://discord.gg/w2sw8mCqep"><img src="https://img.shields.io/badge/discord-join-F97316?logo=discord&logoColor=white" alt="Discord" /></a>
+    <a href="https://x.com/_codeburn"><img src="https://img.shields.io/badge/X-%40__codeburn-F97316?logo=x&logoColor=white" alt="Follow @_codeburn on X" /></a>
     <a href="https://github.com/sponsors/iamtoruk"><img src="https://img.shields.io/badge/sponsor-♥-F97316?logo=github" alt="Sponsor" /></a>
 </p>
 
