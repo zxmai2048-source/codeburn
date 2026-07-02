@@ -316,13 +316,16 @@ describe('user price overrides', () => {
     expect(mini!.outputCostPerToken).toBe(miniSnapshot!.outputCostPerToken)
   })
 
-  it('includes price overrides in the daily cache config hash without changing the empty-override hash', () => {
+  it('includes builtin and user price overrides in the daily cache config hash', () => {
     setLocalModelSavings({ local: 'gpt-4o' })
     setPriceOverrides({})
 
-    const savingsOnly = getLocalModelSavingsConfigHash()
-    expect(getPriceOverridesConfigHash()).toBe('')
-    expect(getDailyCacheConfigHash()).toBe(savingsOnly)
+    // The builtin overrides always participate, so a release that edits them
+    // invalidates cached daily costs even with no user overrides configured.
+    const builtinOnly = getPriceOverridesConfigHash()
+    expect(builtinOnly).toContain('builtin:')
+    expect(getPriceOverridesConfigHash()).toBe(builtinOnly)
+    const baseline = getDailyCacheConfigHash()
 
     setPriceOverrides({ 'price-hash-model': { input: 1, output: 2 } })
     const firstCombined = getDailyCacheConfigHash()
@@ -330,8 +333,8 @@ describe('user price overrides', () => {
     setPriceOverrides({ 'price-hash-model': { input: 3, output: 2 } })
     const secondCombined = getDailyCacheConfigHash()
 
-    expect(firstCombined).not.toBe(savingsOnly)
-    expect(secondCombined).not.toBe(savingsOnly)
+    expect(firstCombined).not.toBe(baseline)
+    expect(secondCombined).not.toBe(baseline)
     expect(secondCombined).not.toBe(firstCombined)
   })
 })
@@ -455,10 +458,7 @@ describe('Cursor model variants resolve to pricing', () => {
     // Haiku family
     ['claude-4.5-haiku', 'claude-haiku-4-5'],
     ['claude-4.6-haiku', 'claude-haiku-4-5'],
-    // Cursor house models
-    ['composer-1', 'claude-sonnet-4-5'],
-    ['composer-1.5', 'claude-sonnet-4-5'],
-    ['composer-2', 'claude-sonnet-4-6'],
+    // Cursor auto proxy
     ['cursor-auto', 'claude-sonnet-4-5'],
     // OpenAI variants Cursor emits
     ['gpt-5', 'gpt-5'],
@@ -483,6 +483,26 @@ describe('Cursor model variants resolve to pricing', () => {
       // where a future edit re-points an alias at a wrong-but-positive entry.
       expect(costs!.inputCostPerToken).toBe(expected!.inputCostPerToken)
       expect(costs!.outputCostPerToken).toBe(expected!.outputCostPerToken)
+    })
+  }
+})
+
+describe('Cursor house model pricing', () => {
+  const cases: Array<[string, { input: number; output: number; cacheWrite: number; cacheRead: number }]> = [
+    ['composer-2.5', { input: 0.5, output: 2.5, cacheWrite: 0.5, cacheRead: 0.2 }],
+    ['composer-2', { input: 0.5, output: 2.5, cacheWrite: 0.5, cacheRead: 0.2 }],
+    ['composer-1.5', { input: 3.5, output: 17.5, cacheWrite: 3.5, cacheRead: 0.35 }],
+    ['composer-1', { input: 1.25, output: 10, cacheWrite: 1.25, cacheRead: 0.125 }],
+  ]
+
+  for (const [model, rates] of cases) {
+    it(`${model} uses Cursor-published rates instead of Claude Sonnet proxy pricing`, () => {
+      const costs = getModelCosts(model)
+      expect(costs).not.toBeNull()
+      expect(costs!.inputCostPerToken).toBeCloseTo(rates.input * 1e-6, 12)
+      expect(costs!.outputCostPerToken).toBeCloseTo(rates.output * 1e-6, 12)
+      expect(costs!.cacheWriteCostPerToken).toBeCloseTo(rates.cacheWrite * 1e-6, 12)
+      expect(costs!.cacheReadCostPerToken).toBeCloseTo(rates.cacheRead * 1e-6, 12)
     })
   }
 })
