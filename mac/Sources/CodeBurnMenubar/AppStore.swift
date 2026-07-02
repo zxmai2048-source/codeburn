@@ -1188,7 +1188,7 @@ final class AppStore {
 }
 
 enum SupportedCurrency: String, CaseIterable, Identifiable {
-    case USD, GBP, EUR, AUD, CAD, NZD, JPY, CNY, CHF, INR, BRL, SEK, SGD, HKD, KRW, MXN, ZAR, DKK
+    case USD, GBP, EUR, AUD, CAD, NZD, JPY, CNY, CHF, INR, BRL, SEK, SGD, HKD, KRW, MXN, ZAR, DKK, RON
     var id: String { rawValue }
     var displayName: String {
         switch self {
@@ -1210,6 +1210,7 @@ enum SupportedCurrency: String, CaseIterable, Identifiable {
         case .MXN: "Mexican Peso"
         case .ZAR: "South African Rand"
         case .DKK: "Danish Krone"
+        case .RON: "Romanian Leu"
         }
     }
 }
