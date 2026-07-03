@@ -24,6 +24,8 @@ import { loadRemotes, saveRemotes } from './sharing/store.js'
 import type { UsageQuery } from './sharing/share-server.js'
 import { formatDateRangeLabel, parseDateRangeFlags, parseDayFlag, parseDaysFlag, getDateRange, toPeriod, type Period } from './cli-date.js'
 import { runOptimize } from './optimize.js'
+import { registerActCommands } from './act/cli.js'
+import { registerGuardCommands } from './guard/cli.js'
 import { runContextCommand } from './context-tree.js'
 import { renderCompare } from './compare.js'
 import {
@@ -1327,13 +1329,45 @@ program
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--format <format>', 'Output format: text, json', 'text')
+  .option('--json', 'Output findings as JSON (alias for --format json)')
+  .option('--apply', 'Interactively apply config-class fixes (backed up, journaled, undoable)')
+  .option('--yes', 'With --apply: apply every appliable fix without prompting')
+  .option('--dry-run', 'With --apply: print the plan and exit without changing anything')
+  .option('--only <ids>', 'With --apply: restrict to a comma-separated list of finding ids')
   .action(async (opts) => {
-    assertFormat(opts.format, ['text', 'json'], 'optimize')
     assertProvider(opts.provider, 'optimize')
+    const format = opts.json ? 'json' : opts.format
+    if (opts.apply && format === 'json') {
+      process.stderr.write('codeburn optimize: --apply cannot be combined with --json\n')
+      process.exit(2)
+    }
     await loadPricing()
     const { range, label } = getDateRange(opts.period)
     const projects = await parseAllSessions(range, opts.provider)
-    await runOptimize(projects, label, range, { format: opts.format })
+    if (opts.apply) {
+      const { runOptimizeApply } = await import('./act/optimize-apply.js')
+      await runOptimizeApply(projects, range, { yes: opts.yes, dryRun: opts.dryRun, only: opts.only })
+      return
+    }
+    assertFormat(format, ['text', 'json'], 'optimize')
+    if (format === 'text') {
+      // Surface realized savings from applied actions. Best effort: optimize
+      // must never fail because of journal contents, so any error just drops
+      // the header. computeActReport returns fast without scanning when the
+      // journal has no eligible applied actions, so users who never opted in
+      // see identical output.
+      let appliedHeader: string | undefined
+      let previouslyApplied: Record<string, string> | undefined
+      try {
+        const { computeActReport, buildOptimizeAppliedHeader } = await import('./act/report.js')
+        const applied = await computeActReport()
+        appliedHeader = buildOptimizeAppliedHeader(applied) ?? undefined
+        previouslyApplied = applied.appliedByFinding
+      } catch { /* the header is optional; never block the findings */ }
+      await runOptimize(projects, label, range, { format, appliedHeader, previouslyApplied })
+    } else {
+      await runOptimize(projects, label, range, { format })
+    }
   })
 
 program
@@ -1537,5 +1571,8 @@ program
     const { startStdioServer } = await import('./mcp/server.js')
     await startStdioServer(version)
   })
+
+registerActCommands(program)
+registerGuardCommands(program)
 
 program.parse()
