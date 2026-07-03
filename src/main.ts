@@ -1328,13 +1328,28 @@ program
   .option('-p, --period <period>', 'Analysis period: today, week, 30days, month, all', '30days')
   .option('--provider <provider>', 'Filter by provider (e.g. claude, gemini, cursor, copilot)', 'all')
   .option('--format <format>', 'Output format: text, json', 'text')
+  .option('--json', 'Output findings as JSON (alias for --format json)')
+  .option('--apply', 'Interactively apply config-class fixes (backed up, journaled, undoable)')
+  .option('--yes', 'With --apply: apply every appliable fix without prompting')
+  .option('--dry-run', 'With --apply: print the plan and exit without changing anything')
+  .option('--only <ids>', 'With --apply: restrict to a comma-separated list of finding ids')
   .action(async (opts) => {
-    assertFormat(opts.format, ['text', 'json'], 'optimize')
     assertProvider(opts.provider, 'optimize')
+    const format = opts.json ? 'json' : opts.format
+    if (opts.apply && format === 'json') {
+      process.stderr.write('codeburn optimize: --apply cannot be combined with --json\n')
+      process.exit(2)
+    }
     await loadPricing()
     const { range, label } = getDateRange(opts.period)
     const projects = await parseAllSessions(range, opts.provider)
-    await runOptimize(projects, label, range, { format: opts.format })
+    if (opts.apply) {
+      const { runOptimizeApply } = await import('./act/optimize-apply.js')
+      await runOptimizeApply(projects, range, { yes: opts.yes, dryRun: opts.dryRun, only: opts.only })
+      return
+    }
+    assertFormat(format, ['text', 'json'], 'optimize')
+    await runOptimize(projects, label, range, { format })
   })
 
 program
