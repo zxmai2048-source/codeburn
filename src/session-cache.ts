@@ -115,6 +115,7 @@ const PROVIDER_PARSE_VERSIONS: Record<string, string> = {
   copilot: 'otel-durable-v1',
   hermes: 'reasoning-output-accounting-v1',
   'ibm-bob': 'worktree-project-grouping-v1',
+  kiro: 'ide-parsing-v1',
   'kilo-code': 'worktree-project-grouping-v1',
   'roo-code': 'worktree-project-grouping-v1',
   warp: 'worktree-project-grouping-v1',
