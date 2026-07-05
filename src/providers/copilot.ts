@@ -61,6 +61,7 @@ import { readdir, stat } from 'fs/promises'
 import { homedir, platform } from 'os'
 import { join, basename, dirname, posix, win32 } from 'path'
 import { existsSync } from 'fs'
+import { createHash } from 'crypto'
 import { readSessionFile } from '../fs-utils.js'
 import { calculateCost } from '../models.js'
 import { extractBashCommands } from '../bash-utils.js'
@@ -1412,15 +1413,24 @@ function createJetBrainsParser(
         if (dbRaw) {
           const storeModel = inferJetBrainsModel(dbRaw)
           const turns = extractJetBrainsDbTurns(dbRaw)
-          // Per-conversation turn counter for stable, tab-scoped dedup keys.
-          const perConvIndex = new Map<string, number>()
+          // Dedup keys derive from the reply CONTENT, not the scan position:
+          // copilot is a durable provider (cached turns are never deleted and a
+          // re-parse appends any key it hasn't seen), while MVStore compaction
+          // can rewrite the file with blobs in a different byte order. With
+          // positional keys, a rewrite that puts a new blob ahead of an old one
+          // hands the new turn the old turn's key (skipped as seen) and re-emits
+          // the old turn under a fresh index — double-billing it. The per-hash
+          // counter keeps genuinely repeated replies and errored turns (which
+          // share replyText '') distinct within a conversation.
+          const perContentIndex = new Map<string, number>()
           for (const turn of turns) {
             // One .db holds many chat tabs; group each turn under its own
             // conversation so the user sees one session per tab, not per file.
             const convId = turn.conversationId || sessionId
-            const idx = (perConvIndex.get(convId) ?? 0) + 1
-            perConvIndex.set(convId, idx)
-            const dedupKey = `copilot:jb:${convId}:${idx}`
+            const contentHash = createHash('sha256').update(turn.replyText).digest('hex').slice(0, 12)
+            const nth = (perContentIndex.get(`${convId}:${contentHash}`) ?? 0) + 1
+            perContentIndex.set(`${convId}:${contentHash}`, nth)
+            const dedupKey = `copilot:jb:${convId}:${contentHash}:${nth}`
             if (seenKeys.has(dedupKey)) continue
             seenKeys.add(dedupKey)
 

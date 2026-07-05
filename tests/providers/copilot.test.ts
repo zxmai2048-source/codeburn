@@ -1297,9 +1297,10 @@ describe('copilot provider - JetBrains parsing', () => {
     // Per-turn model recovered from inside the blob, normalised dots→dashes.
     expect(calls[1]!.model).toBe('claude-opus-4-5')
     expect(calls[1]!.costUSD).toBeGreaterThan(0)
-    // Dedup keys are conversation-scoped and stable.
-    expect(calls[0]!.deduplicationKey).toBe('copilot:jb:conv-1:1')
-    expect(calls[1]!.deduplicationKey).toBe('copilot:jb:conv-1:2')
+    // Dedup keys are conversation-scoped, content-derived, and distinct.
+    expect(calls[0]!.deduplicationKey).toMatch(/^copilot:jb:conv-1:[0-9a-f]{12}:1$/)
+    expect(calls[1]!.deduplicationKey).toMatch(/^copilot:jb:conv-1:[0-9a-f]{12}:1$/)
+    expect(calls[0]!.deduplicationKey).not.toBe(calls[1]!.deduplicationKey)
   })
 
   it('recovers a reply containing quotes without garbling or duplicating it', async () => {
@@ -1753,5 +1754,72 @@ describe('copilot provider - JetBrains parsing', () => {
     // Only the one Subgraph-format turn — no old-format duplicates
     expect(calls).toHaveLength(1)
     expect(calls[0]!.outputTokens).toBeGreaterThan(0)
+  })
+})
+
+describe('copilot provider - JetBrains dedup key stability across store rewrites', () => {
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'copilot-jetbrains-dedup-'))
+    vi.stubEnv('CODEBURN_COPILOT_DISABLE_OTEL', '1')
+  })
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true })
+    vi.unstubAllEnvs()
+  })
+
+  function jbDedupSource(path: string, sessionId: string) {
+    return {
+      path, project: 'copilot-jetbrains', provider: 'copilot', sourceType: 'jetbrains',
+      sessionId, storeId: sessionId, dbPath: path, mtime: '2026-07-03T12:00:00.000Z',
+    } as unknown as { path: string; project: string; provider: string; sourceType?: string }
+  }
+
+  function blobFor(text: string) {
+    const innerMd = { type: 'Markdown', data: JSON.stringify({ text, annotations: [] }) }
+    const valueMap = { 'a1b2c3d4-0000-0000-0000-000000000001': { type: 'Value', value: JSON.stringify(innerMd) } }
+    return JSON.stringify({ __first__: { type: 'Subgraph', value: JSON.stringify(valueMap) } })
+  }
+
+  function dbContent(blobs: string[]) {
+    return (
+      'H:2,block:9,blockSize:1000,format:3\n' +
+      'com.github.copilot.agent.session.persistence.nitrite.entity.NtAgentTurn\n' +
+      '\n' + blobs.join('\nt\x00\x00model\n') + '\n'
+    )
+  }
+
+  it('a compaction that moves a new blob ahead of an old one must not re-bill the old turn', async () => {
+    // copilot is a durable provider: cached turns are never deleted, and a
+    // re-parse appends any dedup key it has not seen. MVStore compaction can
+    // rewrite the file with blobs in a different byte order. If dedup keys were
+    // positional (conversation + scan index), a rewrite that puts a NEW turn
+    // before an OLD one would hand the new turn the old turn's key (skipped as
+    // already-seen) and re-emit the old turn under a fresh index — billing it
+    // twice and never billing the new turn. Content-derived keys are immune.
+    const oldReply = 'The original answer, long enough to carry a token estimate.'
+    const newReply = 'A fresh answer written after the compaction happened.'
+
+    const dir = join(tmpDir, 'iu', 'chat-agent-sessions', 'conv-rewrite')
+    await mkdir(dir, { recursive: true })
+    const dbPath = join(dir, 'copilot-agent-sessions-nitrite.db')
+
+    const seen = new Set<string>()
+
+    // Scan 1: the store holds only the old turn.
+    await writeFile(dbPath, dbContent([blobFor(oldReply)]))
+    const first = await collectCalls(jbDedupSource(dbPath, 'conv-rewrite'), seen)
+    expect(first).toHaveLength(1)
+    expect(first[0]!.outputTokens).toBe(Math.ceil(oldReply.length / 4))
+
+    // Scan 2: compaction rewrote the file — the new turn now sits BEFORE the
+    // old one in byte order.
+    await writeFile(dbPath, dbContent([blobFor(newReply), blobFor(oldReply)]))
+    const second = await collectCalls(jbDedupSource(dbPath, 'conv-rewrite'), seen)
+
+    // Exactly the new turn must be billed — once, at its own length. The old
+    // turn is already cached and must not re-enter under a different key.
+    expect(second).toHaveLength(1)
+    expect(second[0]!.outputTokens).toBe(Math.ceil(newReply.length / 4))
   })
 })
