@@ -1,6 +1,6 @@
 import type { Dirent } from 'fs'
 import { existsSync } from 'fs'
-import { readdir, readFile } from 'fs/promises'
+import { readdir, readFile, stat } from 'fs/promises'
 import { basename, dirname, extname, join } from 'path'
 import { homedir } from 'os'
 
@@ -585,7 +585,7 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
       const historyArr = record['history']
       if (Array.isArray(historyArr) && typeof record['sessionId'] === 'string') {
         const sessionId = record['sessionId'] as string
-        const modelRaw = (record['selectedModel'] as string) ?? ''
+        const modelRaw = stringField(record, ['selectedModel'])
         let modelId = normalizeModelId(modelRaw)
         if (modelId === 'auto' || !modelId) modelId = 'kiro-auto'
 
@@ -601,7 +601,8 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           if (!rec) continue
 
           // Track if this session references execution files (which are parsed separately)
-          if (typeof rec['executionId'] === 'string') hasExecutionRefs = true
+          const execBacked = typeof rec['executionId'] === 'string'
+          if (execBacked) hasExecutionRefs = true
 
           const msg = asRecord(rec['message'])
           if (!msg) continue
@@ -610,7 +611,11 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
           if (role === 'user' && text) {
             inputChars += text.length
             pendingUserMessage = text.slice(0, 500)
-          } else if (role === 'assistant' && text && text !== 'On it.') {
+          } else if (role === 'assistant' && !execBacked && text && text !== 'On it.') {
+            // An item carrying an executionId is execution-backed: its content is
+            // counted from the execution file, so counting it here would double-count.
+            // 'On it.' is the observed placeholder text Kiro writes for such stubs
+            // when the executionId rides a separate history item.
             outputChars += text.length
             hasRealAssistantContent = true
           }
@@ -625,19 +630,19 @@ function createParser(source: SessionSource, seenKeys: Set<string>): SessionPars
         // Skip sessions with no meaningful content
         if (inputChars === 0 && outputChars === 0) return
 
-        const dedupKey = `kiro:ws-session:${sessionId}`
-        if (seenKeys.has(dedupKey)) return
-        seenKeys.add(dedupKey)
-
-        // Use file mtime as timestamp (workspace-session files don't carry startTime)
-        const { stat } = await import('fs/promises')
+        // Use file mtime as timestamp (workspace-session files don't carry startTime).
+        // No stat means no usable timestamp: drop the call like the other parse paths.
         let timestamp: string
         try {
           const s = await stat(source.path)
           timestamp = new Date(s.mtimeMs).toISOString()
         } catch {
-          timestamp = new Date().toISOString()
+          return
         }
+
+        const dedupKey = `kiro:ws-session:${sessionId}`
+        if (seenKeys.has(dedupKey)) return
+        seenKeys.add(dedupKey)
 
         const inputTokens = Math.ceil(inputChars / CHARS_PER_TOKEN)
         const outputTokens = Math.ceil(outputChars / CHARS_PER_TOKEN)
