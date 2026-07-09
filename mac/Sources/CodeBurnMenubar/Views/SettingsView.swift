@@ -238,6 +238,20 @@ private struct ClaudeSettingsTab: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
+            Section("Usage Refresh") {
+                Picker("Update every", selection: Binding(
+                    get: { UsageRefreshCadence.current },
+                    set: { UsageRefreshCadence.current = $0 }
+                )) {
+                    ForEach(UsageRefreshCadence.allCases) { cadence in
+                        Text(cadence.label).tag(cadence)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text("How often the menubar figure re-reads your local session data. Auto refreshes every 30 seconds while you're plugged in and backs off on battery; Manual only refreshes when you open the popover or click Refresh Now.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
             Section("Quota Refresh") {
                 Picker("Update every", selection: Binding(
                     get: { SubscriptionRefreshCadence.current },

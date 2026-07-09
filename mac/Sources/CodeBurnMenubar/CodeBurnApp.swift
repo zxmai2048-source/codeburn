@@ -207,7 +207,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             startRefreshLoop(forceQuotaOnStart: false)
         } else {
-            runRefreshLoopTick(reason: reason, forcePayload: true, forceQuota: false)
+            // Manual cadence means no automatic spawns, wakes included; the
+            // user refreshes via popover open or Refresh Now. The tick still
+            // runs so stuck-state cleanup happens.
+            runRefreshLoopTick(
+                reason: reason,
+                forcePayload: UsageRefreshCadence.current != .manual,
+                forceQuota: false
+            )
         }
     }
 
@@ -561,13 +568,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let clearedStaleLoading = store.clearStaleLoadingIfNeeded()
         let statusPayloadStale = store.needsStatusPayloadRefresh
         let sinceLast = Date().timeIntervalSince(lastRefreshTime)
-        // The timer stays at 30s; the spawn interval stretches on battery /
-        // Low Power Mode while the popover is closed (#647).
+        // The timer stays at 30s; the spawn interval follows the user's
+        // Settings cadence, stretching on battery / Low Power Mode in Auto
+        // and never auto-spawning in Manual (#647).
         let interval = currentRefreshInterval()
+        let intervalElapsed = interval.map { sinceLast >= $0 } ?? false
         let shouldForceRefresh = forcePayload ||
             clearedStaleForceRefresh ||
             clearedStaleLoading ||
-            sinceLast >= interval
+            intervalElapsed
 
         if shouldForceRefresh {
             forceRefresh(bypassRateLimit: true, forceQuota: forceQuota)
@@ -575,12 +584,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         let forceRefreshWasBlocked = hadForceRefreshInFlight && forceRefreshTask != nil
         if statusPayloadStale && (!shouldForceRefresh || forceRefreshWasBlocked || clearedStaleStatusRefresh) {
-            refreshStatusPayloadIfNeeded(reason: reason, force: forcePayload, minAgeSeconds: interval)
+            guard forcePayload || interval != nil else { return }
+            refreshStatusPayloadIfNeeded(reason: reason, force: forcePayload, minAgeSeconds: interval ?? 0)
         }
     }
 
-    private func currentRefreshInterval() -> TimeInterval {
+    private func currentRefreshInterval() -> TimeInterval? {
         RefreshCadence.interval(
+            mode: UsageRefreshCadence.current,
             popoverOpen: popover?.isShown ?? false,
             onBattery: PowerSource.isOnBattery(),
             lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled

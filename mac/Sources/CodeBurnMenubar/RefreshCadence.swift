@@ -13,11 +13,29 @@ enum RefreshCadence {
     static let batteryIdleSeconds: TimeInterval = 150
     static let lowPowerIdleSeconds: TimeInterval = 300
 
-    static func interval(popoverOpen: Bool, onBattery: Bool, lowPowerMode: Bool) -> TimeInterval {
-        if popoverOpen { return activeSeconds }
-        if lowPowerMode { return lowPowerIdleSeconds }
-        if onBattery { return batteryIdleSeconds }
-        return activeSeconds
+    /// nil means "never auto-spawn" (manual mode): usage refreshes only on
+    /// popover open, Refresh Now, and first launch.
+    static func interval(
+        mode: UsageRefreshCadence,
+        popoverOpen: Bool,
+        onBattery: Bool,
+        lowPowerMode: Bool
+    ) -> TimeInterval? {
+        switch mode {
+        case .manual:
+            return nil
+        case .auto:
+            if popoverOpen { return activeSeconds }
+            if lowPowerMode { return lowPowerIdleSeconds }
+            if onBattery { return batteryIdleSeconds }
+            return activeSeconds
+        case .oneMinute, .fiveMinutes, .fifteenMinutes:
+            // A fixed user-chosen cadence, except an open popover always gets
+            // the active cadence: the user is looking at the numbers.
+            return popoverOpen
+                ? min(activeSeconds, TimeInterval(mode.rawValue))
+                : TimeInterval(mode.rawValue)
+        }
     }
 }
 
