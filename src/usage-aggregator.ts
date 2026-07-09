@@ -3,7 +3,7 @@ import { CATEGORY_LABELS, type ProjectSummary, type TaskCategory, type DateRange
 import { type PeriodData, type ProviderCost, type BreakdownArrays, type MenubarPayload, buildMenubarPayload } from './menubar-json.js'
 import { parseAllSessions, filterProjectsByName, filterProjectsByDays } from './parser.js'
 import { findUnpricedModels, getLocalModelSavingsConfigHash, getPriceOverridesConfigHash, getShortModelName } from './models.js'
-import { getAllProviders } from './providers/index.js'
+import { getAllProviders, safeDiscoverSessions } from './providers/index.js'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from './day-aggregator.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { aggregateModels } from './models-report.js'
@@ -200,7 +200,7 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
     }
     for (const p of allProviders) {
       if (providers.some(pc => pc.name === p.displayName)) continue
-      const sources = await p.discoverSessions()
+      const sources = await safeDiscoverSessions(p)
       if (sources.length > 0) providers.push({ name: p.displayName, cost: 0 })
     }
   } else {

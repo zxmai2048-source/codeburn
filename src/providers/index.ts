@@ -226,14 +226,40 @@ export async function getAllProviders(): Promise<Provider[]> {
 
 export const providers = coreProviders
 
-export async function discoverAllSessions(providerFilter?: string): Promise<SessionSource[]> {
-  const allProviders = await getAllProviders()
+// Isolate one provider's discovery. A provider that throws (a crafted/corrupt
+// file reaching a string op, an unexpected on-disk shape) must never take down
+// the whole scan and blank every other provider's usage. Warn once per
+// provider per run, then skip it. Mirrors the parse-failure isolation already
+// used per-file in parser.ts.
+const warnedDiscoveryFailures = new Set<string>()
+export async function safeDiscoverSessions(provider: Provider): Promise<SessionSource[]> {
+  try {
+    return await provider.discoverSessions()
+  } catch (err) {
+    if (!warnedDiscoveryFailures.has(provider.name)) {
+      warnedDiscoveryFailures.add(provider.name)
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(
+        `codeburn: skipped ${provider.name} discovery after an error: ${msg}\n`
+      )
+    }
+    return []
+  }
+}
+
+export async function discoverAllSessions(
+  providerFilter?: string,
+  // Injectable for tests so the isolation loop itself is exercised, not just
+  // the helper. Defaults to the real registry.
+  providerList?: Provider[],
+): Promise<SessionSource[]> {
+  const allProviders = providerList ?? await getAllProviders()
   const filtered = providerFilter && providerFilter !== 'all'
     ? allProviders.filter(p => p.name === providerFilter)
     : allProviders
   const all: SessionSource[] = []
   for (const provider of filtered) {
-    const sessions = await provider.discoverSessions()
+    const sessions = await safeDiscoverSessions(provider)
     all.push(...sessions)
   }
   return all
