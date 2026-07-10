@@ -3,11 +3,11 @@ import { useState } from 'react'
 import { Hint } from './components/Hint'
 import { Panel } from './components/Panel'
 import { Sidebar, type Section } from './components/Sidebar'
-import { Stat } from './components/Stat'
 import { TopBar } from './components/TopBar'
 import { Window } from './components/Window'
 import { usePolled } from './hooks/usePolled'
 import { codeburn } from './lib/ipc'
+import { Overview } from './sections/Overview'
 import type { MenubarPayload, Period } from './lib/types'
 
 const SECTION_TITLES: Record<Section, string> = {
@@ -67,7 +67,7 @@ export function App() {
         />
         <div className="body">
           {section === 'overview' ? (
-            <OverviewPlaceholder polled={overview} />
+            <Overview period={period} provider={provider} />
           ) : (
             <SectionPlaceholder title={SECTION_TITLES[section]} />
           )}
@@ -95,51 +95,6 @@ function StatusLine({ polled }: { polled: ReturnType<typeof usePolled<MenubarPay
   if (polled.error?.kind === 'not-found') return <>CLI not found</>
   if (polled.loading) return <>scanning…</>
   return <>—</>
-}
-
-/**
- * Task 0 smoke view: renders the raw `current.cost` from getOverview to prove
- * the end-to-end path. The real Overview (stat cards, capsule chart, sessions)
- * is Task 2. CLI-missing shows an honest first-run state, never a crash.
- */
-function OverviewPlaceholder({ polled }: { polled: ReturnType<typeof usePolled<MenubarPayload>> }) {
-  if (polled.error?.kind === 'not-found') {
-    return (
-      <Panel title="Locate the codeburn CLI">
-        <p style={{ color: 'var(--t2)', margin: '0 0 6px', fontSize: 12.5 }}>
-          CodeBurn Desktop reads your usage by running the <code style={{ fontFamily: 'var(--mono)', color: 'var(--lav)' }}>codeburn</code> command,
-          but it isn&apos;t on your PATH yet.
-        </p>
-        <p style={{ color: 'var(--t3)', margin: 0, fontSize: 11.5 }}>
-          Install it with <code style={{ fontFamily: 'var(--mono)', color: 'var(--lav)' }}>npm i -g codeburn</code>, then reopen this window.
-        </p>
-      </Panel>
-    )
-  }
-
-  if (polled.error) {
-    return (
-      <Panel title="Couldn't read usage">
-        <p style={{ color: 'var(--red)', margin: 0, fontSize: 12 }}>{polled.error.message}</p>
-      </Panel>
-    )
-  }
-
-  if (!polled.data) {
-    return (
-      <Panel title="Overview">
-        <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>Scanning sessions…</p>
-      </Panel>
-    )
-  }
-
-  const current = polled.data.current
-  return (
-    <div className="stats" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-      <Stat label={current.label} value={fmtUsd(current.cost)} delta={`${current.sessions} sessions`} tone="info" />
-      <Stat label="Calls" value={current.calls.toLocaleString('en-US')} delta="this period" />
-    </div>
-  )
 }
 
 function SectionPlaceholder({ title }: { title: string }) {
