@@ -589,6 +589,8 @@ export function OverviewContent({
         <FuelRing status={plans.data} onNavigate={onNavigate} />
       </div>
 
+      <ActivityHeatmap daily={data.history.daily} />
+
       <div className="ov-coach">
         <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
         <div className="ov-coach-tx">
@@ -638,8 +640,6 @@ export function OverviewContent({
           </div>
         </div>
       </div>
-
-      <ActivityHeatmap daily={data.history.daily} />
     </div>
   )
 }
