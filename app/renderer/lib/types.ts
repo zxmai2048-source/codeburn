@@ -6,6 +6,8 @@
 
 export type Period = 'today' | 'week' | '30days' | 'month' | 'all'
 
+export type DateRange = { from: string; to: string }
+
 export type CliErrorKind = 'not-found' | 'nonzero' | 'bad-json' | 'timeout'
 
 /** Structured failure surfaced across the IPC boundary as plain data. */
@@ -360,13 +362,13 @@ export type ActReportJson = {
 // ————— IPC surface (preload contextBridge → window.codeburn) —————
 
 export interface CodeburnBridge {
-  getOverview(period: Period, provider: string): Promise<MenubarPayload>
+  getOverview(period: Period, provider: string, range?: DateRange): Promise<MenubarPayload>
   getPlans(period: Period): Promise<StatusJson>
   getActReport(): Promise<ActReportJson>
   readonly platform: string
-  getModels(period: Period, provider: string, byTask: boolean): Promise<ModelReportRow[]>
-  getYield(period: Period): Promise<YieldJsonReport>
-  getSpendFlow(period: Period, provider: string): Promise<SpendFlow>
+  getModels(period: Period, provider: string, byTask: boolean, range?: DateRange): Promise<ModelReportRow[]>
+  getYield(period: Period, range?: DateRange): Promise<YieldJsonReport>
+  getSpendFlow(period: Period, provider: string, range?: DateRange): Promise<SpendFlow>
   getDevices(period: Period): Promise<CombinedUsage>
   getDevicesScan(): Promise<DeviceScanResult>
   getShareStatus(): Promise<ShareStatus>

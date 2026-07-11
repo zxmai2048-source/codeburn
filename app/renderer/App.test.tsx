@@ -3,11 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
-import type { MenubarPayload, SpendFlow } from './lib/types'
+import type { DateRange, MenubarPayload, SpendFlow } from './lib/types'
 
 const mocks = vi.hoisted(() => ({
-  getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
-  getSpendFlow: vi.fn<(period: string, provider: string) => Promise<SpendFlow>>(),
+  getOverview: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<MenubarPayload>>(),
+  getSpendFlow: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<SpendFlow>>(),
   getModels: vi.fn(),
   getPlans: vi.fn(),
   getActReport: vi.fn(),
@@ -46,7 +46,7 @@ function overviewPayload(): MenubarPayload {
       topActivities: [],
       topModels: [],
       localModelSavings: { totalUSD: 0, calls: 0, byModel: [], byProvider: [] },
-      providers: {},
+      providers: { claude: 10, codex: 2 },
       topProjects: [],
       modelEfficiency: [],
       topSessions: [],
@@ -169,10 +169,36 @@ describe('App shortcuts', () => {
     })
 
     fireEvent.click(screen.getByText('All providers'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Claude' }))
 
     await waitFor(() => {
       expect(mocks.getOverview).toHaveBeenCalledWith('today', 'claude')
       expect(mocks.getSpendFlow).toHaveBeenCalledWith('today', 'claude')
     })
+  })
+
+  it('applies a calendar range to overview and visible section polls', async () => {
+    render(<App />)
+
+    fireEvent.keyDown(document, { key: '2', metaKey: true })
+    expect(await screen.findByText('Cost flow · model → project')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose date range' }))
+
+    const to = new Date()
+    const from = new Date(to.getFullYear(), to.getMonth(), to.getDate() - 2)
+    const fromLabel = from.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+    const toLabel = to.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+    const range = { from: dateKey(from), to: dateKey(to) }
+
+    fireEvent.mouseDown(screen.getByRole('button', { name: fromLabel }))
+    fireEvent.mouseEnter(screen.getByRole('button', { name: toLabel }))
+    fireEvent.mouseUp(screen.getByRole('button', { name: toLabel }))
+
+    await waitFor(() => {
+      expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all', range)
+      expect(mocks.getSpendFlow).toHaveBeenCalledWith('30days', 'all', range)
+    })
+    expect(screen.getByRole('button', { name: /–/ })).toBeInTheDocument()
+    expect(screen.getByText('30D')).not.toHaveClass('on')
   })
 })

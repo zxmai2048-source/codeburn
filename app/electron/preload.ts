@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 // so this shares main.ts's declaration without pulling its runtime in.
 import type { Envelope } from './main'
 
+type DateRange = { from: string; to: string }
+
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const res = (await ipcRenderer.invoke(channel, ...args)) as Envelope<T>
   if (res.ok) return res.value
@@ -16,12 +18,12 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 // Shape matches CodeburnBridge (app/renderer/lib/types.ts); typing is enforced
 // renderer-side where `window.codeburn` is declared as CodeburnBridge.
 const bridge = {
-  getOverview: (period: string, provider: string) => invoke('codeburn:getOverview', period, provider),
+  getOverview: (period: string, provider: string, range?: DateRange) => invoke('codeburn:getOverview', period, provider, range),
   getPlans: (period: string) => invoke('codeburn:getPlans', period),
   getActReport: () => invoke('codeburn:getActReport'),
-  getModels: (period: string, provider: string, byTask: boolean) => invoke('codeburn:getModels', period, provider, byTask),
-  getYield: (period: string) => invoke('codeburn:getYield', period),
-  getSpendFlow: (period: string, provider: string) => invoke('codeburn:getSpendFlow', period, provider),
+  getModels: (period: string, provider: string, byTask: boolean, range?: DateRange) => invoke('codeburn:getModels', period, provider, byTask, range),
+  getYield: (period: string, range?: DateRange) => invoke('codeburn:getYield', period, range),
+  getSpendFlow: (period: string, provider: string, range?: DateRange) => invoke('codeburn:getSpendFlow', period, provider, range),
   getDevices: (period: string) => invoke('codeburn:getDevices', period),
   getDevicesScan: () => invoke('codeburn:getDevicesScan'),
   getShareStatus: () => invoke('codeburn:getShareStatus'),

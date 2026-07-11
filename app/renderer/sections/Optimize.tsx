@@ -6,7 +6,7 @@ import { SegTabs } from '../components/SegTabs'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { MenubarPayload, Period, SessionYieldJson, YieldJsonReport } from '../lib/types'
+import type { DateRange, MenubarPayload, Period, SessionYieldJson, YieldJsonReport } from '../lib/types'
 
 type OptimizeTab = 'waste' | 'reverts' | 'abandoned' | 'fixes'
 
@@ -14,21 +14,29 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
 }
 
-export function Optimize({ period, provider }: { period: Period; provider: string }) {
-  const overview = usePolled<MenubarPayload>(() => codeburn.getOverview(period, provider), [period, provider])
-  return <OptimizeContent period={period} overview={overview} />
+export function Optimize({ period, provider, range = null }: { period: Period; provider: string; range?: DateRange | null }) {
+  const overview = usePolled<MenubarPayload>(
+    () => range ? codeburn.getOverview(period, provider, range) : codeburn.getOverview(period, provider),
+    [period, provider, range?.from, range?.to],
+  )
+  return <OptimizeContent period={period} range={range} overview={overview} />
 }
 
 export function OptimizeContent({
   period,
+  range = null,
   overview,
   refreshToken = 0,
 }: {
   period: Period
+  range?: DateRange | null
   overview: Polled<MenubarPayload>
   refreshToken?: number
 }) {
-  const yieldReport = usePolled<YieldJsonReport>(() => codeburn.getYield(period), [period, refreshToken])
+  const yieldReport = usePolled<YieldJsonReport>(
+    () => range ? codeburn.getYield(period, range) : codeburn.getYield(period),
+    [period, range?.from, range?.to, refreshToken],
+  )
   const [tab, setTab] = useState<OptimizeTab>('waste')
 
   if (!overview.data) {

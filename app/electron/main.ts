@@ -11,6 +11,12 @@ function providerArgs(provider: string | undefined): string[] {
   return provider && provider !== 'all' ? ['--provider', provider] : []
 }
 
+type DateRange = { from: string; to: string }
+
+function rangeArgs(range: DateRange | undefined): string[] {
+  return range ? ['--from', range.from, '--to', range.to] : []
+}
+
 function toEnvelopeError(err: unknown): { kind: string; message: string } {
   if (err instanceof CliError) return { kind: err.kind, message: err.message }
   return { kind: 'nonzero', message: err instanceof Error ? err.message : String(err) }
@@ -38,17 +44,19 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, resolveCodeburnPat
   }
 
   return {
-    'codeburn:getOverview': run((period: string, provider: string) => [
-      'status', '--format', 'menubar-json', '--period', period, ...providerArgs(provider),
+    'codeburn:getOverview': run((period: string, provider: string, range?: DateRange) => [
+      'status', '--format', 'menubar-json', '--period', period, ...providerArgs(provider), ...rangeArgs(range),
     ]),
     'codeburn:getPlans': run((period: string) => ['status', '--format', 'json', '--period', period]),
     'codeburn:getActReport': run(() => ['act', 'report', '--json']),
-    'codeburn:getModels': run((period: string, provider: string, byTask: boolean) => [
-      'models', '--format', 'json', '--period', period, ...providerArgs(provider), ...(byTask ? ['--by-task'] : []),
+    'codeburn:getModels': run((period: string, provider: string, byTask: boolean, range?: DateRange) => [
+      'models', '--format', 'json', '--period', period, ...providerArgs(provider), ...(byTask ? ['--by-task'] : []), ...rangeArgs(range),
     ]),
-    'codeburn:getYield': run((period: string) => ['yield', '--format', 'json', '--period', period]),
-    'codeburn:getSpendFlow': run((period: string, provider: string) => [
-      'spend', '--format', 'flow-json', '--period', period, ...providerArgs(provider),
+    'codeburn:getYield': run((period: string, range?: DateRange) => [
+      'yield', '--format', 'json', '--period', period, ...rangeArgs(range),
+    ]),
+    'codeburn:getSpendFlow': run((period: string, provider: string, range?: DateRange) => [
+      'spend', '--format', 'flow-json', '--period', period, ...providerArgs(provider), ...rangeArgs(range),
     ]),
     'codeburn:getDevices': run((period: string) => ['devices', '--format', 'json', '--period', period]),
     'codeburn:getDevicesScan': run(() => ['devices', 'scan', '--format', 'json']),

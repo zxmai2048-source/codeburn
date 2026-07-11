@@ -10,7 +10,7 @@ import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import { sliceDailyToPeriod } from '../lib/period'
-import type { MenubarPayload, Period, SpendFlow } from '../lib/types'
+import type { DateRange, MenubarPayload, Period, SpendFlow } from '../lib/types'
 
 type Lens = 'projects' | 'activity' | 'tools' | 'mcp' | 'subagents'
 
@@ -26,23 +26,31 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
 }
 
-export function Spend({ period, provider }: { period: Period; provider: string }) {
-  const overview = usePolled<MenubarPayload>(() => codeburn.getOverview(period, provider), [period, provider])
-  return <SpendContent period={period} provider={provider} overview={overview} />
+export function Spend({ period, provider, range = null }: { period: Period; provider: string; range?: DateRange | null }) {
+  const overview = usePolled<MenubarPayload>(
+    () => range ? codeburn.getOverview(period, provider, range) : codeburn.getOverview(period, provider),
+    [period, provider, range?.from, range?.to],
+  )
+  return <SpendContent period={period} provider={provider} range={range} overview={overview} />
 }
 
 export function SpendContent({
   period,
   provider,
+  range = null,
   overview,
   refreshToken = 0,
 }: {
   period: Period
   provider: string
+  range?: DateRange | null
   overview: Polled<MenubarPayload>
   refreshToken?: number
 }) {
-  const flow = usePolled<SpendFlow>(() => codeburn.getSpendFlow(period, provider), [period, provider, refreshToken])
+  const flow = usePolled<SpendFlow>(
+    () => range ? codeburn.getSpendFlow(period, provider, range) : codeburn.getSpendFlow(period, provider),
+    [period, provider, range?.from, range?.to, refreshToken],
+  )
   const [lens, setLens] = useState<Lens>('projects')
 
   if (!overview.data) {
@@ -58,7 +66,7 @@ export function SpendContent({
     <>
       <SegTabs options={LENSES} value={lens} onChange={value => setLens(value as Lens)} style={{ alignSelf: 'flex-start' }} />
       {lens === 'projects' ? (
-        <ProjectsLens data={overview.data} flow={flow} period={period} />
+        <ProjectsLens data={overview.data} flow={flow} period={period} range={range} />
       ) : (
         <DetailLens data={overview.data} lens={lens} />
       )}
@@ -70,12 +78,16 @@ function ProjectsLens({
   data,
   flow,
   period,
+  range,
 }: {
   data: MenubarPayload
   flow: ReturnType<typeof usePolled<SpendFlow>>
   period: Period
+  range: DateRange | null
 }) {
-  const daily = sliceDailyToPeriod(data.history.daily, period)
+  const daily = range
+    ? data.history.daily.filter(day => day.date >= range.from && day.date <= range.to)
+    : sliceDailyToPeriod(data.history.daily, period)
   const projects = data.current.topProjects
 
   return (

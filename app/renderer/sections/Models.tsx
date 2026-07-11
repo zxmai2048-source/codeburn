@@ -7,7 +7,7 @@ import { SegTabs } from '../components/SegTabs'
 import { usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { ModelReportRow, Period } from '../lib/types'
+import type { DateRange, ModelReportRow, Period } from '../lib/types'
 
 type ModelsLens = 'model' | 'task'
 
@@ -33,12 +33,22 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
 }
 
-export function Models({ period, provider, refreshToken = 0 }: { period: Period; provider: string; refreshToken?: number }) {
+export function Models({
+  period,
+  provider,
+  range = null,
+  refreshToken = 0,
+}: {
+  period: Period
+  provider: string
+  range?: DateRange | null
+  refreshToken?: number
+}) {
   const [lens, setLens] = useState<ModelsLens>('model')
   const byTask = lens === 'task'
   const report = usePolled<ModelReportRow[]>(
-    () => codeburn.getModels(period, provider, byTask),
-    [period, provider, byTask, refreshToken],
+    () => range ? codeburn.getModels(period, provider, byTask, range) : codeburn.getModels(period, provider, byTask),
+    [period, provider, byTask, range?.from, range?.to, refreshToken],
   )
 
   if (!report.data) {

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Hint } from './components/Hint'
 import { Panel } from './components/Panel'
 import { Sidebar, type Section } from './components/Sidebar'
-import { TopBar } from './components/TopBar'
+import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
 import { usePolled } from './hooks/usePolled'
 import { formatUsd } from './lib/format'
@@ -14,7 +14,7 @@ import { Models } from './sections/Models'
 import { Plans } from './sections/Plans'
 import { Settings } from './sections/Settings'
 import { SpendContent } from './sections/Spend'
-import type { MenubarPayload, Period } from './lib/types'
+import type { DateRange, MenubarPayload, Period } from './lib/types'
 
 const SECTION_TITLES: Record<Section, string> = {
   overview: 'Overview',
@@ -34,17 +34,18 @@ const PERIOD_LABELS: Record<Period, string> = {
 }
 
 const STANDARD_PERIODS: Period[] = ['today', 'week', '30days', 'month', 'all']
-const PROVIDER_OPTIONS = ['all', 'claude', 'codex', 'cursor', 'grok'] as const
-const PROVIDER_LABELS: Record<(typeof PROVIDER_OPTIONS)[number], string> = {
-  all: 'All providers',
-  claude: 'Claude',
-  codex: 'Codex',
-  cursor: 'Cursor',
-  grok: 'Grok',
-}
 
 function isPeriod(value: string): value is Period {
   return (STANDARD_PERIODS as string[]).includes(value)
+}
+
+function providerName(provider: string): string {
+  if (provider === 'all') return 'All providers'
+  return provider
+    .split(/[-\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function refreshedLabel(lastSuccessAt: number | null, loading: boolean, now: number): string {
@@ -60,12 +61,29 @@ function refreshedLabel(lastSuccessAt: number | null, loading: boolean, now: num
 export function App() {
   const [section, setSection] = useState<Section>('overview')
   const [period, setPeriod] = useState<Period>('30days')
-  const [provider, setProvider] = useState<(typeof PROVIDER_OPTIONS)[number]>('all')
+  const [provider, setProvider] = useState<string>('all')
+  const [detectedProviders, setDetectedProviders] = useState<string[]>([])
+  const [customRange, setCustomRange] = useState<DateRange | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
   const [now, setNow] = useState(() => Date.now())
 
-  const overview = usePolled<MenubarPayload>(() => codeburn.getOverview(period, provider), [period, provider])
+  const overview = usePolled<MenubarPayload>(
+    () => customRange
+      ? codeburn.getOverview(period, provider, customRange)
+      : codeburn.getOverview(period, provider),
+    [period, provider, customRange?.from, customRange?.to],
+  )
   const refreshOverview = overview.refresh
+
+  useEffect(() => {
+    if (!overview.data) return
+    const found = Object.keys(overview.data.current.providers)
+    setDetectedProviders(current => {
+      const next = [...current]
+      for (const item of found) if (!next.includes(item)) next.push(item)
+      return next.length === current.length ? current : next
+    })
+  }, [overview.data])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
@@ -97,17 +115,18 @@ export function App() {
   }, [refreshVisible])
 
   const onPeriodChange = (value: string) => {
-    // 6M / Custom (date ranges) are M2; ignore for now so the
-    // highlight never lies about what was fetched.
-    if (isPeriod(value)) setPeriod(value)
+    if (isPeriod(value)) {
+      setCustomRange(null)
+      setPeriod(value)
+    }
   }
 
-  const onProviderClick = () => {
-    setProvider(current => PROVIDER_OPTIONS[(PROVIDER_OPTIONS.indexOf(current) + 1) % PROVIDER_OPTIONS.length])
-  }
-
-  const providerLabel = PROVIDER_LABELS[provider]
-  const scope = `${PERIOD_LABELS[period]} · ${providerLabel}`
+  const providerOptions = [
+    { value: 'all', label: 'All providers' },
+    ...detectedProviders.map(value => ({ value, label: providerName(value) })),
+  ]
+  const providerLabel = providerName(provider)
+  const scope = `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · ${providerLabel}`
 
   return (
     <Window>
@@ -124,18 +143,22 @@ export function App() {
               scope={scope}
               period={period}
               onPeriodChange={onPeriodChange}
+              customRange={customRange}
+              onRangeSelect={setCustomRange}
+              provider={provider}
               providerLabel={providerLabel}
-              onProviderClick={onProviderClick}
+              providerOptions={providerOptions}
+              onProviderSelect={setProvider}
             />
             <div className="body">
               {section === 'overview' ? (
                 <OverviewContent period={period} overview={overview} onNavigate={setSection} />
               ) : section === 'spend' ? (
-                <SpendContent period={period} provider={provider} overview={overview} refreshToken={refreshToken} />
+                <SpendContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} />
               ) : section === 'optimize' ? (
-                <OptimizeContent period={period} overview={overview} refreshToken={refreshToken} />
+                <OptimizeContent period={period} range={customRange} overview={overview} refreshToken={refreshToken} />
               ) : section === 'models' ? (
-                <Models period={period} provider={provider} refreshToken={refreshToken} />
+                <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
               ) : (
                 <SectionPlaceholder title={SECTION_TITLES[section]} />
               )}
