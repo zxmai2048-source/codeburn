@@ -34,8 +34,8 @@ const rows: ModelReportRow[] = [
     credits: null,
   },
   {
-    provider: 'openai',
-    providerDisplayName: 'OpenAI',
+    provider: 'codex',
+    providerDisplayName: 'Codex',
     model: 'gpt-5.5-codex',
     modelDisplayName: 'GPT-5.5 Codex',
     category: null,
@@ -50,6 +50,23 @@ const rows: ModelReportRow[] = [
     costUSD: 137.9,
     savingsUSD: 35.1,
     savingsBaselineModel: 'GPT-5.5 Codex',
+    credits: 173,
+  },
+  {
+    provider: 'local',
+    providerDisplayName: 'Local',
+    model: 'llama-local',
+    modelDisplayName: 'Llama Local',
+    category: null,
+    inputTokens: 750_000,
+    outputTokens: 400_000,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 1_150_000,
+    calls: 82,
+    costUSD: 0,
+    savingsUSD: 12.34,
+    savingsBaselineModel: 'Claude Opus 4.8',
     credits: null,
   },
   {
@@ -111,14 +128,38 @@ describe('Models', () => {
     expect(dots[1]).toHaveAttribute('style', expect.stringContaining('var(--cyan)'))
   })
 
-  it('renders unpriced proxy rows as dim with alias affordance and cost dashes', async () => {
-    getModels.mockResolvedValue(rows)
+  it('renders codex rows with credits and real cost as priced', async () => {
+    getModels.mockResolvedValue([rows[1]])
+
+    render(<Models period="30days" provider="all" />)
+
+    expect(await screen.findByText('GPT-5.5 Codex')).not.toHaveClass('dim')
+    expect(screen.getByText('$137.90')).not.toHaveClass('dim')
+    expect(screen.getByText('$35.10')).toHaveClass('pos')
+    expect(screen.queryByText('add alias ›')).not.toBeInTheDocument()
+  })
+
+  it('renders local saved-only rows as priced with real savings', async () => {
+    getModels.mockResolvedValue([rows[2]])
+
+    render(<Models period="30days" provider="all" />)
+
+    expect(await screen.findByText('Llama Local')).not.toHaveClass('dim')
+    expect(screen.getByText('0.8M')).toBeInTheDocument()
+    expect(screen.getByText('0.4M')).toBeInTheDocument()
+    expect(screen.getByText('$0.00')).not.toHaveClass('dim')
+    expect(screen.getByText('$12.34')).toHaveClass('pos')
+    expect(screen.queryByText('add alias ›')).not.toBeInTheDocument()
+  })
+
+  it('renders unpriced proxy rows as dim with alias affordance and dashes', async () => {
+    getModels.mockResolvedValue([rows[3]])
 
     render(<Models period="30days" provider="all" />)
 
     expect(await screen.findByText('my-proxy-model')).toHaveClass('dim')
     expect(screen.getByText('add alias ›')).toHaveClass('alias')
-    expect(screen.getAllByText('—')).toHaveLength(2)
+    expect(screen.getAllByText('—')).toHaveLength(5)
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument()
   })
 

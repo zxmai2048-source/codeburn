@@ -24,6 +24,7 @@ function fmtInt(n: number): string {
 
 function fmtCompact(n: number): string {
   if (n === 0) return '0'
+  if (n < 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   return new Intl.NumberFormat('en-US', {
     notation: 'compact',
     maximumFractionDigits: n >= 10_000_000 ? 1 : 2,
@@ -115,8 +116,9 @@ function ModelsTable({ rows, byTask }: { rows: ModelReportRow[]; byTask: boolean
 }
 
 function ModelTableRow({ row, byTask }: { row: ModelReportRow; byTask: boolean }) {
-  const unpriced = (row.costUSD === 0 && row.calls > 0) || row.credits !== null
+  const unpriced = row.costUSD === 0 && row.savingsUSD === 0
   const cellClass = unpriced ? 'dim' : undefined
+  const tokenValue = (value: number) => (unpriced ? '—' : fmtCompact(value))
   const dotStyle = {
     display: 'inline-block',
     background: seriesColorForModel(row.modelDisplayName || row.model),
@@ -142,9 +144,9 @@ function ModelTableRow({ row, byTask }: { row: ModelReportRow; byTask: boolean }
         ) : null}
       </td>
       <td className={cellClass}>{fmtInt(row.calls)}</td>
-      <td className={cellClass}>{fmtCompact(row.inputTokens)}</td>
-      <td className={cellClass}>{fmtCompact(row.outputTokens)}</td>
-      <td className={cellClass}>{fmtCompact(row.cacheReadTokens)}</td>
+      <td className={cellClass}>{tokenValue(row.inputTokens)}</td>
+      <td className={cellClass}>{tokenValue(row.outputTokens)}</td>
+      <td className={cellClass}>{tokenValue(row.cacheReadTokens)}</td>
       <td className={cellClass}>{unpriced ? '—' : fmtUsd(row.costUSD)}</td>
       <td className={unpriced ? 'dim' : row.savingsUSD > 0 ? 'pos' : undefined}>{unpriced ? '—' : fmtUsd(row.savingsUSD)}</td>
     </tr>
