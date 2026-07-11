@@ -30,25 +30,3 @@ export function sliceDailyToPeriod(daily: DailyHistoryEntry[], period: Period, n
   const todayKey = localDateKey(now)
   return daily.filter(d => (start === null || d.date >= start) && d.date <= todayKey)
 }
-
-/** Length of the selected period in days; `all` spans available history when provided. */
-export function periodLengthDays(period: Period, daily: DailyHistoryEntry[] = [], now = new Date()): number {
-  switch (period) {
-    case 'today':
-      return 1
-    case 'week':
-      return 7
-    case '30days':
-      return 30
-    case 'month':
-      return now.getDate()
-    case 'all': {
-      if (daily.length === 0) return 1
-      const earliest = daily.reduce((min, d) => (d.date < min ? d.date : min), daily[0].date)
-      const [y, m, d] = earliest.split('-').map(Number)
-      const start = new Date(y, m - 1, d)
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      return Math.max(1, Math.round((today.getTime() - start.getTime()) / 86_400_000) + 1)
-    }
-  }
-}

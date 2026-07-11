@@ -10,6 +10,14 @@ export const SERIES_HEX = {
 
 export type SeriesKey = keyof typeof SERIES_HEX
 
+const SERIES_LABELS: Record<SeriesKey, string> = {
+  opus: 'Opus 4.8',
+  sonnet: 'Sonnet 5',
+  haiku: 'Haiku 4.5',
+  gpt: 'GPT-5.5 Codex',
+  other: 'Other',
+}
+
 export function seriesKeyForModel(model?: string): SeriesKey {
   const m = (model ?? '').toLowerCase()
   if (m.includes('opus')) return 'opus'
@@ -44,10 +52,17 @@ export function isOtherNode(idOrLabel?: string): boolean {
 }
 
 export function StackedBars({ daily }: { daily: DailyHistoryEntry[] }) {
+  const presentSeries = new Set<SeriesKey>()
   const maxTotal = Math.max(
     1,
     ...daily.map(day => day.topModels.reduce((sum, model) => sum + Math.max(0, model.cost), 0)),
   )
+  for (const day of daily) {
+    for (const model of day.topModels) {
+      if (model.cost > 0) presentSeries.add(seriesKeyForModel(model.name))
+    }
+  }
+  const legendSeries = (['opus', 'sonnet', 'haiku', 'gpt', 'other'] as const).filter(series => presentSeries.has(series))
 
   return (
     <>
@@ -69,22 +84,12 @@ export function StackedBars({ daily }: { daily: DailyHistoryEntry[] }) {
         ))}
       </div>
       <div className="legend">
-        <span>
-          <i style={{ background: 'var(--blue)' }} />
-          Opus 4.8
-        </span>
-        <span>
-          <i style={{ background: 'var(--purple)' }} />
-          Sonnet 5
-        </span>
-        <span>
-          <i style={{ background: 'var(--lav)' }} />
-          Haiku 4.5
-        </span>
-        <span>
-          <i style={{ background: 'var(--cyan)' }} />
-          GPT-5.5 Codex
-        </span>
+        {legendSeries.map(series => (
+          <span key={series}>
+            <i style={{ background: SERIES_HEX[series] }} />
+            {SERIES_LABELS[series]}
+          </span>
+        ))}
       </div>
     </>
   )

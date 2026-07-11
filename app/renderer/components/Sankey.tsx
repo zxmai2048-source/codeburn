@@ -6,16 +6,18 @@ type LayoutNode = SpendFlowNode & {
   y: number
   h: number
   fill: string
+  displayLabel: string
 }
 
-const VIEW_W = 640
+const VIEW_W = 760
 const VIEW_H = 190
 const TOP = 14
 const BOTTOM = 18
-const LEFT_X = 72
-const RIGHT_X = 562
+const LEFT_X = 126
+const RIGHT_X = 520
 const NODE_W = 5
 const GAP = 8
+const MIN_RIBBON_W = 2
 
 export function Sankey({ flow }: { flow: SpendFlow }) {
   const models = layoutNodes(flow.models, LEFT_X, true)
@@ -32,7 +34,7 @@ export function Sankey({ flow }: { flow: SpendFlow }) {
 
     const sourceSegment = segmentSize(source, link.cost)
     const targetSegment = segmentSize(target, link.cost)
-    const width = Math.max(2, Math.min(28, (sourceSegment + targetSegment) / 2))
+    const width = Math.max(MIN_RIBBON_W, (sourceSegment + targetSegment) / 2)
     const sy = source.y + (sourceOffset.get(source.id) ?? 0) + sourceSegment / 2
     const ty = target.y + (targetOffset.get(target.id) ?? 0) + targetSegment / 2
     sourceOffset.set(source.id, (sourceOffset.get(source.id) ?? 0) + sourceSegment)
@@ -43,6 +45,8 @@ export function Sankey({ flow }: { flow: SpendFlow }) {
       <path
         key={`${link.model}-${link.project}-${i}`}
         data-testid="sankey-ribbon"
+        data-model={source.id}
+        data-project={target.id}
         d={`M ${LEFT_X + NODE_W + 1} ${round(sy)} C 300 ${round(sy)} 380 ${round(ty)} ${RIGHT_X - 1} ${round(ty)}`}
         stroke={`url(#${gradId})`}
         strokeWidth={round(width)}
@@ -66,20 +70,40 @@ export function Sankey({ flow }: { flow: SpendFlow }) {
       {ribbons}
 
       {models.map(node => (
-        <rect key={node.id} x={node.x} y={round(node.y)} width={NODE_W} height={round(node.h)} rx="2.5" fill={node.fill} />
+        <rect
+          key={node.id}
+          data-testid="sankey-node"
+          data-node-id={node.id}
+          x={node.x}
+          y={round(node.y)}
+          width={NODE_W}
+          height={round(node.h)}
+          rx="2.5"
+          fill={node.fill}
+        />
       ))}
       {projects.map(node => (
-        <rect key={node.id} x={node.x} y={round(node.y)} width={NODE_W} height={round(node.h)} rx="2.5" fill={node.fill} />
+        <rect
+          key={node.id}
+          data-testid="sankey-node"
+          data-node-id={node.id}
+          x={node.x}
+          y={round(node.y)}
+          width={NODE_W}
+          height={round(node.h)}
+          rx="2.5"
+          fill={node.fill}
+        />
       ))}
 
       {models.map(node => (
-        <text key={node.id} x="64" y={round(node.y + node.h / 2 + 3)} textAnchor="end" fontSize="10" fill="#9BA3B7">
-          {node.label} · {fmtUsd(node.cost)}
+        <text key={node.id} x="118" y={round(node.y + node.h / 2 + 3)} textAnchor="end" fontSize="10" fill="#9BA3B7">
+          {node.displayLabel} · {fmtUsd(node.cost)}
         </text>
       ))}
       {projects.map(node => (
-        <text key={node.id} x="575" y={round(node.y + node.h / 2 + 3)} fontSize="10" fill="#9BA3B7">
-          {node.label} · {fmtUsd(node.cost)}
+        <text key={node.id} x="534" y={round(node.y + node.h / 2 + 3)} fontSize="10" fill="#9BA3B7">
+          {node.displayLabel} · {fmtUsd(node.cost)}
         </text>
       ))}
     </svg>
@@ -100,14 +124,15 @@ function layoutNodes(nodes: SpendFlowNode[], x: number, modelSide: boolean): Lay
     const h = Math.max(2, inflated[i] * scale)
     const neutral = isOtherNode(node.id) || isOtherNode(node.label)
     const fill = modelSide && !neutral ? seriesHexForModel(node.label || node.id) : neutral ? '#5F6780' : '#3A4258'
-    const laidOut = { ...node, x, y, h, fill }
+    const displayLabel = modelSide ? modelDisplayLabel(node.label || node.id) : projectDisplayLabel(node.label || node.id)
+    const laidOut = { ...node, x, y, h, fill, displayLabel }
     y += h + GAP
     return laidOut
   })
 }
 
 function segmentSize(node: LayoutNode, cost: number): number {
-  return node.cost > 0 ? Math.max(1, (Math.max(0, cost) / node.cost) * node.h) : 1
+  return node.cost > 0 ? (Math.max(0, cost) / node.cost) * node.h : 0
 }
 
 function gradientId(id: string): string {
@@ -120,4 +145,29 @@ function round(n: number): number {
 
 function fmtUsd(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function modelDisplayLabel(raw: string): string {
+  const value = raw.trim()
+  const lower = value.toLowerCase()
+  if (lower.includes('opus')) return 'Opus 4.8'
+  if (lower.includes('sonnet')) return 'Sonnet 5'
+  if (lower.includes('haiku')) return 'Haiku 4.5'
+  if (lower.includes('gpt') || lower.includes('codex')) return 'GPT-5.5 Codex'
+  return ellipsize(shortenId(value), 18)
+}
+
+function projectDisplayLabel(raw: string): string {
+  const value = raw.trim()
+  if (isOtherNode(value)) return 'Other'
+  const parts = value.split(/[\\/]+/).filter(Boolean)
+  return ellipsize(parts.at(-1) ?? value, 24)
+}
+
+function shortenId(value: string): string {
+  return value.replace(/^claude[-_]/i, '').replace(/^openai[-_]/i, '')
+}
+
+function ellipsize(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value
 }

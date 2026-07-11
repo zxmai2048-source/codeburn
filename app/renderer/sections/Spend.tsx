@@ -93,7 +93,7 @@ function ProjectsLens({
         <Panel title="Daily spend by model">
           {daily.length ? <StackedBars daily={daily} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
         </Panel>
-        <Panel title="By project" right={`${projects.length} ${projects.length === 1 ? 'project' : 'projects'}`}>
+        <Panel title="By project" right={projects.length ? `top ${projects.length}` : undefined}>
           {projects.length ? (
             projects.map((project, i) => (
               <ListRow
