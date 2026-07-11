@@ -18,6 +18,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 const bridge = {
   getOverview: (period: string, provider: string) => invoke('codeburn:getOverview', period, provider),
   getPlans: (period: string) => invoke('codeburn:getPlans', period),
+  getActReport: () => invoke('codeburn:getActReport'),
   getModels: (period: string, provider: string, byTask: boolean) => invoke('codeburn:getModels', period, provider, byTask),
   getYield: (period: string) => invoke('codeburn:getYield', period),
   getSpendFlow: (period: string, provider: string) => invoke('codeburn:getSpendFlow', period, provider),

@@ -1,19 +1,21 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { MenubarPayload } from '../lib/types'
+import type { ActReportJson, MenubarPayload, StatusJson } from '../lib/types'
 import { Overview, localDateKey } from './Overview'
 
 // Mock the typed bridge so the section fetches our payload instead of spawning
 // the CLI. `normalizeCliError` (used by usePolled) is kept from the real module.
 // `vi.hoisted` lets the hoisted `vi.mock` factory reference the spy safely.
-const { getOverview } = vi.hoisted(() => ({
+const { getOverview, getPlans, getActReport } = vi.hoisted(() => ({
   getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
+  getPlans: vi.fn<(period: string) => Promise<StatusJson>>(),
+  getActReport: vi.fn<() => Promise<ActReportJson>>(),
 }))
 vi.mock('../lib/ipc', async orig => {
   const actual = await orig<typeof import('../lib/ipc')>()
-  return { ...actual, codeburn: { getOverview } }
+  return { ...actual, codeburn: { getOverview, getPlans, getActReport } }
 })
 
 /**
@@ -41,7 +43,7 @@ function makePayload(now: Date): MenubarPayload {
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-      topModels: [],
+      topModels: [{ name: 'claude-opus-4', cost, savingsUSD: 0, calls: 40, inputTokens: 0, outputTokens: 0 }],
     }
   })
 
@@ -103,12 +105,25 @@ function makePayload(now: Date): MenubarPayload {
 describe('Overview', () => {
   beforeEach(() => {
     getOverview.mockReset()
+    getPlans.mockReset()
+    getActReport.mockReset()
+    getPlans.mockResolvedValue({
+      currency: 'USD',
+      today: { cost: 0, savings: 0, calls: 0 },
+      month: { cost: 0, savings: 0, calls: 0 },
+      plan: {
+        id: 'claude-pro', provider: 'claude', budget: 100, spent: 82, percentUsed: 82,
+        status: 'near', projectedMonthEnd: 120, daysUntilReset: 4,
+        periodStart: '2026-07-01', periodEnd: '2026-08-01',
+      },
+    })
+    getActReport.mockResolvedValue({ totals: { realizedCostUSD: 84.2, measuredActions: 11 } })
   })
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  it("renders today's spend, a session title, and a highlighted capsule chart", async () => {
+  it("renders real hero, plan, saved, session, and daily-chart data", async () => {
     const now = new Date()
     getOverview.mockResolvedValue(makePayload(now))
 
@@ -116,21 +131,43 @@ describe('Overview', () => {
 
     // Today card value comes from today's history.daily entry ($6.20).
     expect(await screen.findByText('$6.20')).toBeInTheDocument()
+    expect(container.querySelector('.ov-streak')).toHaveTextContent('30-day streak')
 
     // Session row title = the session's project (topSessions has no title field).
     expect(screen.getByText('parser-service')).toBeInTheDocument()
 
-    // The full 30-day backfill is inside the 30days window, so all 30 bars show;
-    // the peak ($32, idx 10) and runner-up ($28, idx 20) are the highlighted ones.
-    const bars = container.querySelectorAll('.bars .c')
+    // The selected range produces one real bar per day and only its peak is highlighted.
+    const bars = container.querySelectorAll('.chart .col')
     expect(bars).toHaveLength(30)
     expect(bars[10].classList.contains('hi')).toBe(true)
-    expect(bars[20].classList.contains('hi2')).toBe(true)
-    expect(container.querySelectorAll('.c.hi')).toHaveLength(1)
-    expect(container.querySelectorAll('.c.hi2')).toHaveLength(1)
+    expect(container.querySelectorAll('.chart .col.hi')).toHaveLength(1)
+    expect(bars[29]).toHaveAttribute('data-cost', '6.2')
+    expect(bars[29]).toHaveAttribute('data-calls', '40')
+    expect(bars[29]).toHaveAttribute('data-led', 'claude-opus-4')
+    fireEvent.mouseEnter(bars[29], { clientX: 100, clientY: 80 })
+    expect(screen.getByText('40 calls · claude-opus-4 led')).toBeInTheDocument()
 
-    // Waste/wk for a 30-day period = savingsUSD(23.6) / 30 days × 7 = $5.51.
-    expect(screen.getByText('$5.51')).toBeInTheDocument()
+    expect(screen.getByText('82%')).toBeInTheDocument()
+    expect(screen.getByText('$84.20')).toBeInTheDocument()
+    expect(screen.getByText('from 11 applied fixes')).toBeInTheDocument()
+  })
+
+  it('uses honest empty states when no budget or realized savings exist', async () => {
+    const now = new Date()
+    getOverview.mockResolvedValue(makePayload(now))
+    getPlans.mockResolvedValue({
+      currency: 'USD',
+      today: { cost: 0, savings: 0, calls: 0 },
+      month: { cost: 0, savings: 0, calls: 0 },
+    })
+    getActReport.mockResolvedValue({ totals: { realizedCostUSD: 0, measuredActions: 7 } })
+
+    render(<Overview period="30days" provider="all" />)
+
+    expect(await screen.findByText('No budget set')).toBeInTheDocument()
+    await waitFor(() => expect(getActReport).toHaveBeenCalled())
+    expect(screen.getByText('$0.00')).toBeInTheDocument()
+    expect(screen.getByText('from 0 applied fixes')).toBeInTheDocument()
   })
 
   it('slices the capsule chart to the selected period window', async () => {
@@ -142,10 +179,7 @@ describe('Overview', () => {
     const { container } = render(<Overview period="week" provider="all" />)
 
     expect(await screen.findByText('parser-service')).toBeInTheDocument()
-    expect(container.querySelectorAll('.bars .c')).toHaveLength(7)
-
-    // Waste/wk for a 7-day period = savingsUSD(23.6) / 7 days × 7 = $23.60.
-    expect(screen.getByText('$23.60')).toBeInTheDocument()
+    expect(container.querySelectorAll('.chart .col')).toHaveLength(7)
   })
 
   it('computes month-to-date, projection, and previous-month pace', async () => {
@@ -176,7 +210,7 @@ describe('Overview', () => {
     expect(await screen.findByText('$99.20')).toBeInTheDocument()
     // Projected = MTD + median(trailing-7 = $5) × 16 days left = $179.20.
     expect(screen.getByText('$179.20')).toBeInTheDocument()
-    expect(screen.getByText('+$80.00 rest of month')).toBeInTheDocument()
+    expect(screen.getByText('$80.00 to go')).toBeInTheDocument()
     // Pace compares July's daily avg (6.613) to the PREVIOUS calendar month's
     // (June: 14×$5 + $32 = $102 / 15 = 6.8) → -3%, and the label names June.
     expect(screen.getByText('-3% vs June pace')).toBeInTheDocument()

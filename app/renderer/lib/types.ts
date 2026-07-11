@@ -348,11 +348,21 @@ export type ScannedDevice = {
 }
 export type DeviceScanResult = { found: ScannedDevice[] }
 
+// ————— src/act/report.ts buildActReportJson —————
+
+export type ActReportJson = {
+  totals: {
+    realizedCostUSD: number
+    measuredActions: number
+  }
+}
+
 // ————— IPC surface (preload contextBridge → window.codeburn) —————
 
 export interface CodeburnBridge {
   getOverview(period: Period, provider: string): Promise<MenubarPayload>
   getPlans(period: Period): Promise<StatusJson>
+  getActReport(): Promise<ActReportJson>
   getModels(period: Period, provider: string, byTask: boolean): Promise<ModelReportRow[]>
   getYield(period: Period): Promise<YieldJsonReport>
   getSpendFlow(period: Period, provider: string): Promise<SpendFlow>

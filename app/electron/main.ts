@@ -42,6 +42,7 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, resolveCodeburnPat
       'status', '--format', 'menubar-json', '--period', period, ...providerArgs(provider),
     ]),
     'codeburn:getPlans': run((period: string) => ['status', '--format', 'json', '--period', period]),
+    'codeburn:getActReport': run(() => ['act', 'report', '--json']),
     'codeburn:getModels': run((period: string, provider: string, byTask: boolean) => [
       'models', '--format', 'json', '--period', period, ...providerArgs(provider), ...(byTask ? ['--by-task'] : []),
     ]),

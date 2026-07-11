@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getSpendFlow: vi.fn<(period: string, provider: string) => Promise<SpendFlow>>(),
   getModels: vi.fn(),
   getPlans: vi.fn(),
+  getActReport: vi.fn(),
   getYield: vi.fn(),
   getDevices: vi.fn(),
   getDevicesScan: vi.fn(),
@@ -82,6 +83,7 @@ describe('App shortcuts', () => {
     mocks.getSpendFlow.mockResolvedValue({ period: { label: 'Last 30 days', start: '', end: '' }, models: [], projects: [], links: [] })
     mocks.getModels.mockResolvedValue([])
     mocks.getPlans.mockResolvedValue({})
+    mocks.getActReport.mockResolvedValue({ totals: { realizedCostUSD: 0, measuredActions: 0 } })
     mocks.getYield.mockResolvedValue({
       period: { label: 'Last 30 days', start: '', end: '' },
       summary: {

@@ -26,6 +26,7 @@ function fakeSpawn(result: unknown = { current: { cost: 12.34 } }) {
 const CHANNELS = [
   'codeburn:getOverview',
   'codeburn:getPlans',
+  'codeburn:getActReport',
   'codeburn:getModels',
   'codeburn:getYield',
   'codeburn:getSpendFlow',
@@ -40,6 +41,7 @@ const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = 
   { channel: 'codeburn:getOverview', args: ['30days', 'claude'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--provider', 'claude'] },
   { channel: 'codeburn:getOverview', args: ['30days', 'all'], argv: ['status', '--format', 'menubar-json', '--period', '30days'] },
   { channel: 'codeburn:getPlans', args: ['week'], argv: ['status', '--format', 'json', '--period', 'week'] },
+  { channel: 'codeburn:getActReport', args: [], argv: ['act', 'report', '--json'] },
   { channel: 'codeburn:getModels', args: ['week', 'claude', true], argv: ['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task'] },
   { channel: 'codeburn:getModels', args: ['week', 'all', false], argv: ['models', '--format', 'json', '--period', 'week'] },
   { channel: 'codeburn:getYield', args: ['today'], argv: ['yield', '--format', 'json', '--period', 'today'] },
@@ -58,7 +60,7 @@ function flattenMenuItems(items: any[]): any[] {
 }
 
 describe('createBridgeHandlers (channel → argv for all channels)', () => {
-  it('exposes exactly the ten codeburn:* channels', () => {
+  it('exposes exactly the eleven codeburn:* channels', () => {
     const handlers = createBridgeHandlers({ spawnCli: vi.fn(), resolveCodeburnPath: () => null })
     expect(Object.keys(handlers).sort()).toEqual([...CHANNELS].sort())
   })

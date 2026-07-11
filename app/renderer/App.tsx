@@ -129,7 +129,7 @@ export function App() {
             />
             <div className="body">
               {section === 'overview' ? (
-                <OverviewContent period={period} overview={overview} />
+                <OverviewContent period={period} overview={overview} onNavigate={setSection} />
               ) : section === 'spend' ? (
                 <SpendContent period={period} provider={provider} overview={overview} refreshToken={refreshToken} />
               ) : section === 'optimize' ? (
