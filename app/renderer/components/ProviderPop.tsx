@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { ProviderLogo } from './ProviderLogo'
+
 export type ProviderOption = { value: string; label: string }
 
 /** Provider selector populated from providers detected in the CLI payload. */
@@ -49,7 +51,7 @@ export function ProviderPop({
           }
         }}
       >
-        {label}
+        <ProviderLogo provider={value} />{label}
       </div>
       {open && (
         <div className="pop-menu" role="listbox" aria-label="Providers">
@@ -72,7 +74,7 @@ export function ProviderPop({
                 }
               }}
             >
-              {option.label}
+              <ProviderLogo provider={option.value} />{option.label}
             </div>
           ))}
         </div>

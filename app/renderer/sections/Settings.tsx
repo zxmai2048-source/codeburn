@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Hint } from '../components/Hint'
 import { CliErrorText, cliErrorDisplay } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
+import { ProviderLogo } from '../components/ProviderLogo'
 import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
@@ -142,7 +143,7 @@ function ProvidersPane({ period, refreshToken }: { period: Period; refreshToken:
   const providers = Object.entries(overview.data?.current.providers ?? {})
   return <section className="set-p on">
     <div><h3 className="set-h">Providers</h3><p className="set-sub">codeburn auto-detects coding tools from local session files — no setup needed.</p></div>
-    {overview.error ? <SettingsErrorText error={overview.error} /> : !overview.data ? <p className="set-cap">Loading detected providers…</p> : providers.length === 0 ? <p className="set-cap">No providers detected.</p> : providers.map(([name, cost]) => <div className="card" key={name}><div className="set-prov-head"><span className="set-prov-name">{name.charAt(0).toUpperCase() + name.slice(1)}</span><span className="set-status"><span className="set-dot ok" />Detected · {formatUsd(cost)}</span></div></div>)}
+    {overview.error ? <SettingsErrorText error={overview.error} /> : !overview.data ? <p className="set-cap">Loading detected providers…</p> : providers.length === 0 ? <p className="set-cap">No providers detected.</p> : providers.map(([name, cost]) => <div className="card" key={name}><div className="set-prov-head"><ProviderLogo provider={name} /><span className="set-prov-name">{name.charAt(0).toUpperCase() + name.slice(1)}</span><span className="set-status"><span className="set-dot ok" />Detected · {formatUsd(cost)}</span></div></div>)}
   </section>
 }
 
