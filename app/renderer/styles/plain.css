@@ -417,7 +417,7 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .ov-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--card-shadow); }
 .ov-hero { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; }
 .ov-label { color: var(--mut); font-size: 11.5px; font-weight: 500; }
-.ov-hero-top, .ov-fuel-head { display: flex; align-items: center; justify-content: space-between; }
+.ov-hero-top { display: flex; align-items: center; justify-content: space-between; }
 .ov-streak { font-size: 11px; font-weight: 560; color: var(--mut); background: var(--hover); border-radius: 20px; padding: 3px 10px; white-space: nowrap; }
 .ov-streak b { color: var(--accent); font-weight: 680; }
 .ov-hero-num { font-size: 40px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.05; }
@@ -458,22 +458,8 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .ov-component-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
 .ov-component-track.adverse span { background: var(--bad); }
 .ov-widget-caption { margin: 8px 0 0; color: var(--mut2); font-size: 10.5px; line-height: 1.4; }
-.ov-fuel { display: flex; flex-direction: column; padding: 14px 16px; min-height: 0; }
 .ov-link { color: var(--accent); text-decoration: none; font-size: 11.5px; font-weight: 540; border: 0; background: none; padding: 0; cursor: pointer; }
 .ov-link:hover, .ov-link:focus-visible, .ov-coach-cta:hover, .ov-coach-cta:focus-visible { text-decoration: underline; }
-.ov-ring-wrap { position: relative; width: 98px; height: 98px; margin: 8px auto 2px; }
-.ov-ring { width: 98px; height: 98px; transform: rotate(-90deg); }
-.ov-ring circle { fill: none; stroke-width: 8; stroke-linecap: round; }
-.ov-ring-track { stroke: var(--fill); }
-.ov-ring-fill { transition: stroke-dashoffset .9s ease; }
-.ov-ring-fill.bad { stroke: var(--bad); } .ov-ring-fill.warn { stroke: var(--warn); } .ov-ring-fill.ok { stroke: var(--ok); }
-.ov-ring-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.ov-ring-pct { font-size: 21px; font-weight: 680; font-variant-numeric: tabular-nums; line-height: 1; }
-.ov-ring-lbl { font-size: 9.5px; color: var(--mut2); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
-.ov-fuel-meta { text-align: center; margin-top: 6px; }
-.ov-fuel-name { font-size: 12px; font-weight: 560; }
-.ov-fuel-reset { font-size: 11px; color: var(--mut); font-family: var(--mono); margin-top: 1px; }
-.ov-fuel-empty { margin: auto; text-align: center; color: var(--mut); font-size: 12px; }
 .ov-insight-band { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 12px; align-items: stretch; }
 .ov-insight-band > :only-child { grid-column: 1 / -1; }
 .ov-coach { display: flex; align-items: center; gap: 11px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
@@ -485,11 +471,10 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .ov-anomaly-label { flex: 0 0 auto; color: var(--mut2); font-size: 10px; font-weight: 620; letter-spacing: .06em; line-height: 1.5; text-transform: uppercase; }
 .ov-anomaly-list { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; gap: 5px 20px; color: var(--mut); font-size: 11.5px; line-height: 1.35; }
 .ov-anomaly-list strong { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
-.ov-stats3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; align-items: stretch; }
+.ov-stats3 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; align-items: stretch; }
 .ov-stats3 > * { min-width: 0; padding: 14px 16px; }
 .ov-stats3 > * + * { border-left: 1px solid var(--line2); }
 .ov-stat { display: flex; flex-direction: column; justify-content: center; }
-.ov-stats3 > .ov-fuel { padding: 14px 16px; }
 .ov-stat .v { font-size: 23px; font-weight: 640; letter-spacing: -.02em; margin-top: 6px; font-variant-numeric: tabular-nums; }
 .ov-stat .v small { font-size: 12px; color: var(--mut2); font-weight: 500; }
 .ov-stat .d { font-size: 11.5px; margin-top: 4px; color: var(--mut); }

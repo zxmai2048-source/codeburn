@@ -2,21 +2,20 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ActReportJson, MenubarPayload, StatusJson, YieldJsonReport } from '../lib/types'
+import type { ActReportJson, MenubarPayload, YieldJsonReport } from '../lib/types'
 import { Overview, localDateKey } from './Overview'
 
 // Mock the typed bridge so the section fetches our payload instead of spawning
 // the CLI. `normalizeCliError` (used by usePolled) is kept from the real module.
 // `vi.hoisted` lets the hoisted `vi.mock` factory reference the spy safely.
-const { getOverview, getPlans, getActReport, getYield } = vi.hoisted(() => ({
+const { getOverview, getActReport, getYield } = vi.hoisted(() => ({
   getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
-  getPlans: vi.fn<(period: string) => Promise<StatusJson>>(),
   getActReport: vi.fn<() => Promise<ActReportJson>>(),
   getYield: vi.fn<(period: string) => Promise<YieldJsonReport>>(),
 }))
 vi.mock('../lib/ipc', async orig => {
   const actual = await orig<typeof import('../lib/ipc')>()
-  return { ...actual, codeburn: { getOverview, getPlans, getActReport, getYield } }
+  return { ...actual, codeburn: { getOverview, getActReport, getYield } }
 })
 
 function makeYieldReport(): YieldJsonReport {
@@ -145,19 +144,8 @@ function makePayload(now: Date): MenubarPayload {
 describe('Overview', () => {
   beforeEach(() => {
     getOverview.mockReset()
-    getPlans.mockReset()
     getActReport.mockReset()
     getYield.mockReset()
-    getPlans.mockResolvedValue({
-      currency: 'USD',
-      today: { cost: 0, savings: 0, calls: 0 },
-      month: { cost: 0, savings: 0, calls: 0 },
-      plan: {
-        id: 'claude-pro', provider: 'claude', budget: 100, spent: 82, percentUsed: 82,
-        status: 'near', projectedMonthEnd: 120, daysUntilReset: 4,
-        periodStart: '2026-07-01', periodEnd: '2026-08-01',
-      },
-    })
     getActReport.mockResolvedValue({ totals: { realizedCostUSD: 84.2, measuredActions: 11 } })
     getYield.mockResolvedValue(makeYieldReport())
   })
@@ -165,7 +153,7 @@ describe('Overview', () => {
     vi.useRealTimers()
   })
 
-  it("renders real hero, model, plan, saved, session, and daily-chart data", async () => {
+  it("renders real hero, stats, model, saved, session, and daily-chart data", async () => {
     const now = new Date()
     getOverview.mockResolvedValue(makePayload(now))
 
@@ -245,7 +233,6 @@ describe('Overview', () => {
 
     expect(container.querySelector('.ov-spark')).not.toBeInTheDocument()
 
-    expect(screen.getByText('82%')).toBeInTheDocument()
     // Scope to the KPI card (kpis, declared above): month-to-date spend can
     // equal the saved figure on some dates, so an unscoped getByText('$84.20')
     // would match two cards.
@@ -253,8 +240,9 @@ describe('Overview', () => {
     expect(within(kpis).getByText('from 11 applied fixes')).toBeInTheDocument()
     const statsCard = screen.getByText('Month to date').closest('.ov-stats3')
     expect(statsCard).toHaveClass('ov-card')
-    expect(statsCard?.querySelector(':scope > .ov-fuel')).toBeInTheDocument()
-    expect(statsCard?.querySelector('.ov-fuel.ov-card')).not.toBeInTheDocument()
+    expect(statsCard?.children).toHaveLength(2)
+    expect(within(statsCard as HTMLElement).getByText('Projected month')).toBeInTheDocument()
+    expect(screen.queryByText('Nearest limit')).not.toBeInTheDocument()
   })
 
   it('renders efficiency, cost-per-outcome, and real anomaly widgets', async () => {
@@ -276,22 +264,16 @@ describe('Overview', () => {
     expect(anomalies).toHaveTextContent(/Today's spend is 10× your typical/)
   })
 
-  it('uses honest empty states when no budget or realized savings exist', async () => {
+  it('uses an honest empty state when no realized savings exist', async () => {
     const now = new Date()
     getOverview.mockResolvedValue(makePayload(now))
-    getPlans.mockResolvedValue({
-      currency: 'USD',
-      today: { cost: 0, savings: 0, calls: 0 },
-      month: { cost: 0, savings: 0, calls: 0 },
-    })
     getActReport.mockResolvedValue({ totals: { realizedCostUSD: 0, measuredActions: 7 } })
 
     render(<Overview period="30days" provider="all" />)
 
-    expect(await screen.findByText('No budget set')).toBeInTheDocument()
+    expect(await screen.findByText('from 0 applied fixes')).toBeInTheDocument()
     await waitFor(() => expect(getActReport).toHaveBeenCalled())
     expect(screen.getByText('$0.00')).toBeInTheDocument()
-    expect(screen.getByText('from 0 applied fixes')).toBeInTheDocument()
   })
 
   it('always shows at least a 30-day window regardless of the selected period', async () => {

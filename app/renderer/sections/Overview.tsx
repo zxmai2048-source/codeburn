@@ -12,26 +12,12 @@ import { localDateKey, sliceDailyToPeriod } from '../lib/period'
 import type {
   ActReportJson,
   DailyHistoryEntry,
-  JsonPlanSummary,
   MenubarPayload,
   Period,
-  PlanId,
-  StatusJson,
   YieldJsonReport,
 } from '../lib/types'
 
 export { localDateKey } from '../lib/period'
-
-const PLAN_NAMES: Record<PlanId, string> = {
-  'claude-pro': 'Claude Pro',
-  'claude-max': 'Claude Max',
-  'claude-max-5x': 'Claude Max 5x',
-  'cursor-pro': 'Cursor Pro',
-  supergrok: 'SuperGrok',
-  'supergrok-heavy': 'SuperGrok Heavy',
-  custom: 'Custom plan',
-  none: 'API usage',
-}
 
 function median(values: number[]): number {
   if (!values.length) return 0
@@ -293,63 +279,6 @@ function CountUp({ value }: { value: number }) {
   return <div ref={ref} className="ov-hero-num" data-countup={value}>{formatUsd(value)}</div>
 }
 
-function planSummaries(status: StatusJson | null): JsonPlanSummary[] {
-  if (!status) return []
-  const plans = Object.values(status.plans ?? {}).filter((plan): plan is JsonPlanSummary => Boolean(plan))
-  if (plans.length) return plans
-  return status.plan ? [status.plan] : []
-}
-
-function FuelRing({ status, onNavigate, bare = false }: {
-  status: StatusJson | null
-  onNavigate?: (section: 'plans') => void
-  bare?: boolean
-}) {
-  const plan = [...planSummaries(status)].sort((a, b) => b.percentUsed - a.percentUsed)[0]
-  const circumference = 2 * Math.PI * 34
-  const pct = plan ? Math.max(0, plan.percentUsed) : 0
-  const [animatedPct, setAnimatedPct] = useState(0)
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setAnimatedPct(Math.min(100, pct)))
-    return () => cancelAnimationFrame(frame)
-  }, [pct])
-
-  const severity = pct < 70 ? 'ok' : pct < 90 ? 'warn' : 'bad'
-  return (
-    <div className={`${bare ? '' : 'ov-card '}ov-fuel`}>
-      <div className="ov-fuel-head">
-        <span className="ov-label">Nearest limit</span>
-        <button className="ov-link" type="button" onClick={() => onNavigate?.('plans')}>Plans →</button>
-      </div>
-      {plan ? (
-        <>
-          <div className="ov-ring-wrap">
-            <svg className="ov-ring" viewBox="0 0 80 80" aria-label={`${Math.round(pct)} percent used`}>
-              <circle className="ov-ring-track" cx="40" cy="40" r="34" />
-              <circle
-                className={`ov-ring-fill ${severity}`}
-                cx="40"
-                cy="40"
-                r="34"
-                data-pct={pct}
-                style={{ strokeDasharray: circumference, strokeDashoffset: circumference * (1 - animatedPct / 100) }}
-              />
-            </svg>
-            <div className="ov-ring-c"><div className="ov-ring-pct">{Math.round(pct)}%</div><div className="ov-ring-lbl">used</div></div>
-          </div>
-          <div className="ov-fuel-meta">
-            <div className="ov-fuel-name">{PLAN_NAMES[plan.id]}</div>
-            <div className="ov-fuel-reset">resets in {plan.daysUntilReset}d</div>
-          </div>
-        </>
-      ) : (
-        <div className="ov-fuel-empty">No budget set</div>
-      )}
-    </div>
-  )
-}
-
 function formatDay(date: string): string {
   const [year, month, day] = date.split('-').map(Number)
   return new Date(year, month - 1, day).toLocaleString('en-US', { month: 'short', day: 'numeric' })
@@ -550,9 +479,8 @@ export function OverviewContent({
 }: {
   period: Period
   overview: Polled<MenubarPayload>
-  onNavigate?: (section: 'plans' | 'optimize') => void
+  onNavigate?: (section: 'optimize') => void
 }) {
-  const plans = usePolled<StatusJson>(() => codeburn.getPlans(period), [period])
   const actReport = usePolled<ActReportJson>(() => codeburn.getActReport(), [])
   const yieldReport = usePolled<YieldJsonReport>(() => codeburn.getYield(period), [period])
   const { data, error } = overview
@@ -593,7 +521,6 @@ export function OverviewContent({
       <div className="ov-card ov-stats3">
         <div className="ov-stat"><div className="ov-label">Month to date</div><div className="v">{formatUsd(stats.mtd)}</div><div className="d">{stats.pacePct === null ? `No ${stats.prevMonthName} pace yet` : `${stats.pacePct >= 0 ? '+' : ''}${Math.round(stats.pacePct)}% vs ${stats.prevMonthName} pace`}</div></div>
         <div className="ov-stat"><div className="ov-label">Projected month</div><div className="v">{formatUsd(stats.projected)} <small>est</small></div><div className="d warn">{formatUsd(Math.max(0, stats.projected - stats.mtd))} to go</div></div>
-        <FuelRing status={plans.data} onNavigate={onNavigate} bare />
       </div>
 
       <div className="ov-card ov-panel ov-chart-widget">
