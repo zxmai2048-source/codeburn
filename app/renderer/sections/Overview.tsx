@@ -8,7 +8,7 @@ import { Panel } from '../components/Panel'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import { localDateKey, sliceDailyToPeriod } from '../lib/period'
+import { contiguousDailyWindow, formatChartDate, localDateKey, sliceDailyToPeriod } from '../lib/period'
 import type {
   ActReportJson,
   DailyHistoryEntry,
@@ -240,23 +240,6 @@ function streakDays(daily: DailyHistoryEntry[], now: Date): number {
   return streak
 }
 
-// The daily chart is a trend, not scoped to the period selector: always show a
-// contiguous window of at least 30 calendar days, filling gaps with zero bars.
-function buildDailyWindow(daily: DailyHistoryEntry[], now: Date, days: number): DailyHistoryEntry[] {
-  const byDate = new Map(daily.map(day => [day.date, day]))
-  const window: DailyHistoryEntry[] = []
-  for (let offset = days - 1; offset >= 0; offset--) {
-    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset)
-    const key = localDateKey(date)
-    window.push(byDate.get(key) ?? {
-      date: key, cost: 0, calls: 0, savingsUSD: 0,
-      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
-      topModels: [],
-    })
-  }
-  return window
-}
-
 function CountUp({ value }: { value: number }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -277,11 +260,6 @@ function CountUp({ value }: { value: number }) {
   }, [value])
 
   return <div ref={ref} className="ov-hero-num" data-countup={value}>{formatUsd(value)}</div>
-}
-
-function formatDay(date: string): string {
-  const [year, month, day] = date.split('-').map(Number)
-  return new Date(year, month - 1, day).toLocaleString('en-US', { month: 'short', day: 'numeric' })
 }
 
 function formatShortDay(date: string): string {
@@ -408,7 +386,7 @@ function DailyChart({ daily }: { daily: DailyHistoryEntry[] }) {
       <div className="ov-xax">
         {ticks.map(day => {
           const index = daily.indexOf(day)
-          return <span key={day.date} style={{ left: `${daily.length > 1 ? index / (daily.length - 1) * 100 : 0}%` }}>{formatDay(day.date)}</span>
+          return <span key={day.date} style={{ left: `${daily.length > 1 ? index / (daily.length - 1) * 100 : 0}%` }}>{formatChartDate(day.date)}</span>
         })}
       </div>
       <div className="ov-chart-summaries" aria-label="Daily spend summary">
@@ -423,7 +401,7 @@ function DailyChart({ daily }: { daily: DailyHistoryEntry[] }) {
           style={{ position: 'fixed', ...(tipPosition ?? { left: 0, top: 0 }) }}
           role="tooltip"
         >
-          <div className="chart-tip-d">{formatDay(tip.day.date)}</div>
+          <div className="chart-tip-d">{formatChartDate(tip.day.date)}</div>
           <div className="chart-tip-v">{formatUsd(tip.day.cost)}</div>
           <div className="chart-tip-s">{tip.day.calls} calls · {tip.day.topModels[0]?.name ?? 'No model'} led</div>
         </div>,
@@ -494,7 +472,7 @@ export function OverviewContent({
   const now = new Date()
   const stats = deriveStats(data, now)
   const periodDaily = sliceDailyToPeriod(data.history.daily, period, now)
-  const chartDaily = buildDailyWindow(data.history.daily, now, Math.max(30, periodDaily.length))
+  const chartDaily = contiguousDailyWindow(data.history.daily, Math.max(30, periodDaily.length), now)
   const models = aggregateModels(periodDaily)
   const recent14 = data.history.daily.slice(-14)
   const weekNow = mean(recent14.slice(-7).map(day => day.cost))
@@ -557,7 +535,7 @@ export function OverviewContent({
             <div className="ov-panel-body">
               {data.current.topSessions.length ? data.current.topSessions.map((session, index) => {
                 const model = modelIndex.get(sessionModelKey(session.project, session.date, session.calls, session.cost))
-                const sub = [formatDay(session.date), model, `${session.calls} calls`].filter(Boolean).join(' · ')
+                const sub = [formatChartDate(session.date), model, `${session.calls} calls`].filter(Boolean).join(' · ')
                 return <ListRow key={`${session.project}-${session.date}-${index}`} no={String(index + 1).padStart(2, '0')} title={session.project} sub={sub} value={formatUsd(session.cost)} />
               }) : <EmptyNote>No sessions in this range.</EmptyNote>}
             </div>

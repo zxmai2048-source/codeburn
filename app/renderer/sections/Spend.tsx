@@ -6,7 +6,7 @@ import { StackedBars } from '../components/StackedBars'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import { sliceDailyToPeriod } from '../lib/period'
+import { contiguousDailyWindow } from '../lib/period'
 import type { DateRange, MenubarPayload, Period, SpendFlow } from '../lib/types'
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
@@ -48,23 +48,17 @@ export function SpendContent({
     )
   }
 
-  return <SpendPage data={overview.data} flow={flow} period={period} range={range} />
+  return <SpendPage data={overview.data} flow={flow} />
 }
 
 function SpendPage({
   data,
   flow,
-  period,
-  range,
 }: {
   data: MenubarPayload
   flow: ReturnType<typeof usePolled<SpendFlow>>
-  period: Period
-  range: DateRange | null
 }) {
-  const daily = range
-    ? data.history.daily.filter(day => day.date >= range.from && day.date <= range.to)
-    : sliceDailyToPeriod(data.history.daily, period)
+  const chartDaily = contiguousDailyWindow(data.history.daily, 15)
   const projects = data.current.topProjects
   const breakdowns = [
     {
@@ -117,7 +111,7 @@ function SpendPage({
     <>
       <div className="spend-top-row">
         <Panel title="Daily spend by model" className="spend-chart-panel">
-          {daily.length ? <StackedBars daily={daily} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
+          <StackedBars daily={chartDaily} />
         </Panel>
         <Panel title="By project" right={projects.length ? `top ${projects.length}` : undefined} className="spend-scroll">
           {projects.length ? (

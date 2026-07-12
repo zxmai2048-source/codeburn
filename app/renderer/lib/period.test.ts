@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { DailyHistoryEntry, Period } from './types'
-import { sliceDailyToPeriod } from './period'
+import { contiguousDailyWindow, formatChartDate, sliceDailyToPeriod } from './period'
 
 function entry(date: string): DailyHistoryEntry {
   return {
@@ -53,5 +53,28 @@ describe('sliceDailyToPeriod', () => {
     ],
   ])('returns only in-window entries for %s', (period, expectedDates) => {
     expect(sliceDailyToPeriod(DAILY, period, NOW).map(day => day.date)).toEqual(expectedDates)
+  })
+})
+
+describe('contiguousDailyWindow', () => {
+  it('returns exactly the requested calendar days ending today and zero-fills gaps', () => {
+    const window = contiguousDailyWindow(DAILY, 5, NOW)
+
+    expect(window.map(day => day.date)).toEqual([
+      '2026-07-06',
+      '2026-07-07',
+      '2026-07-08',
+      '2026-07-09',
+      '2026-07-10',
+    ])
+    expect(window[0]).toMatchObject({ cost: 0, calls: 0, topModels: [] })
+    expect(window[3]).toBe(DAILY[7])
+    expect(window[4]).toBe(DAILY[8])
+  })
+})
+
+describe('formatChartDate', () => {
+  it('formats date keys without shifting the local calendar day', () => {
+    expect(formatChartDate('2026-07-01')).toBe('Jul 1')
   })
 })

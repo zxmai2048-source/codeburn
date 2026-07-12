@@ -118,7 +118,6 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.015em; margin: 0 0 6px
 .spend-chart-panel .pbody { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .sbars-wrap { display: flex; flex: 1; min-height: 0; flex-direction: column; height: 100%; }
 .sbars { position: relative; display: flex; flex: 0 0 150px; align-items: flex-end; gap: 4px; height: 150px; padding-top: 8px; border-bottom: 1px solid var(--line2); }
-.sbars::before { content: ''; position: absolute; right: 0; bottom: 36px; left: 0; height: 1px; background: var(--line2); box-shadow: 0 -37px var(--line2), 0 -74px var(--line2); pointer-events: none; }
 .sbars .c { flex: 1; display: flex; flex-direction: column-reverse; height: 100%; justify-content: flex-start; gap: 1.5px; }
 .sbars .s { width: 100%; border-radius: 0; }
 .sbars .s:first-child { border-radius: 0 0 2px 2px; }

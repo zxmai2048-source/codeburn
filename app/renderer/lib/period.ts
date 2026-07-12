@@ -30,3 +30,35 @@ export function sliceDailyToPeriod(daily: DailyHistoryEntry[], period: Period, n
   const todayKey = localDateKey(now)
   return daily.filter(d => (start === null || d.date >= start) && d.date <= todayKey)
 }
+
+/** A contiguous calendar-day window ending today, with missing days zero-filled. */
+export function contiguousDailyWindow(
+  daily: DailyHistoryEntry[],
+  days: number,
+  now = new Date(),
+): DailyHistoryEntry[] {
+  const byDate = new Map(daily.map(day => [day.date, day]))
+  const window: DailyHistoryEntry[] = []
+  for (let offset = days - 1; offset >= 0; offset--) {
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset)
+    const key = localDateKey(date)
+    window.push(byDate.get(key) ?? {
+      date: key,
+      cost: 0,
+      calls: 0,
+      savingsUSD: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      topModels: [],
+    })
+  }
+  return window
+}
+
+/** Format a local date key for compact chart-axis labels such as "Jul 1". */
+export function formatChartDate(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleString('en-US', { month: 'short', day: 'numeric' })
+}
