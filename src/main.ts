@@ -170,6 +170,14 @@ function assertFormat(value: string, allowed: readonly string[], command: string
   }
 }
 
+type AliasRow = { from: string; to: string }
+
+function toAliasRows(aliases: Record<string, string>): AliasRow[] {
+  return Object.entries(aliases)
+    .map(([from, to]) => ({ from, to }))
+    .sort((a, b) => a.from < b.from ? -1 : a.from > b.from ? 1 : 0)
+}
+
 function assertProvider(value: string, command: string): void {
   const names = allProviderNames()
   if (value === 'all' || names.includes(value)) return
@@ -1030,11 +1038,18 @@ program
   .description('Map a provider model name to a canonical one for pricing (e.g. codeburn model-alias my-model claude-opus-4-6)')
   .option('--remove <from>', 'Remove an alias')
   .option('--list', 'List configured aliases')
-  .action(async (from?: string, to?: string, opts?: { remove?: string; list?: boolean }) => {
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (from?: string, to?: string, opts?: { remove?: string; list?: boolean; format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'model-alias')
     const config = await readConfig()
     const aliases = config.modelAliases ?? {}
 
     if (opts?.list || (!from && !opts?.remove)) {
+      if (format === 'json') {
+        console.log(JSON.stringify(toAliasRows(aliases), null, 2))
+        return
+      }
       const entries = Object.entries(aliases)
       if (entries.length === 0) {
         console.log('\n  No model aliases configured.')
@@ -1218,7 +1233,10 @@ program
   .description('Mark a project directory as routed through a subscription-backed LLM proxy (e.g. Claude Code over GitHub Copilot). Sessions whose canonical path is under it keep their full API-rate cost as the "would-be" figure, but that amount is reported as subscription-covered so the report can show net out-of-pocket (e.g. codeburn proxy-path ~/work/copilot-repo). Actual API-key sessions elsewhere are untouched.')
   .option('--remove <path>', 'Remove a configured proxy path')
   .option('--list', 'List configured proxy paths')
-  .action(async (path?: string, opts?: { remove?: string; list?: boolean }) => {
+  .option('--format <format>', 'Output format: text, json', 'text')
+  .action(async (path?: string, opts?: { remove?: string; list?: boolean; format?: string }) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'proxy-path')
     const config = await readConfig()
     // Sanitize the on-disk shape the same way setProxyPaths does: a hand-edited
     // config.json could have proxyPaths as a non-array or hold non-string
@@ -1228,6 +1246,10 @@ program
     const samePath = (a: string, b: string) => normalizeProxyPath(a) === normalizeProxyPath(b)
 
     if (opts?.list || (!path && !opts?.remove)) {
+      if (format === 'json') {
+        console.log(JSON.stringify(paths, null, 2))
+        return
+      }
       if (paths.length === 0) {
         console.log('\n  No proxy paths configured.')
         console.log(`  Config: ${getConfigFilePath()}`)
