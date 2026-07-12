@@ -37,6 +37,11 @@ const bridge = {
   resetCurrency: () => invoke('codeburn:resetCurrency'),
   addAlias: (from: string, to: string) => invoke('codeburn:addAlias', from, to),
   removeAlias: (from: string) => invoke('codeburn:removeAlias', from),
+  removeDevice: (name: string) => invoke('codeburn:removeDevice', name),
+  setPlan: (id: string, provider: string) => invoke('codeburn:setPlan', id, provider),
+  resetPlan: (provider: string) => invoke('codeburn:resetPlan', provider),
+  exportData: (format: string, provider: string, outPath: string) => invoke('codeburn:exportData', format, provider, outPath),
+  chooseDirectory: () => invoke('codeburn:chooseDirectory'),
   cliStatus: () => invoke('codeburn:cliStatus'),
   platform: process.platform,
 }

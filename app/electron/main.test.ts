@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('electron', () => ({
   app: { name: 'CodeBurn', whenReady: () => Promise.resolve(), on: () => {}, quit: () => {} },
   BrowserWindow: class {},
+  dialog: { showOpenDialog: vi.fn() },
   ipcMain: { handle: () => {} },
   Menu: { buildFromTemplate: (template: unknown) => template, setApplicationMenu: () => {} },
 }))
@@ -47,6 +48,10 @@ const CHANNELS = [
   'codeburn:resetCurrency',
   'codeburn:addAlias',
   'codeburn:removeAlias',
+  'codeburn:removeDevice',
+  'codeburn:setPlan',
+  'codeburn:resetPlan',
+  'codeburn:exportData',
   'codeburn:cliStatus',
 ] as const
 
@@ -77,6 +82,10 @@ const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = 
   { channel: 'codeburn:resetCurrency', args: [], argv: ['currency', '--reset'] },
   { channel: 'codeburn:addAlias', args: ['unknown-model', 'priced-model'], argv: ['model-alias', 'unknown-model', 'priced-model'] },
   { channel: 'codeburn:removeAlias', args: ['unknown-model'], argv: ['model-alias', '--remove', 'unknown-model'] },
+  { channel: 'codeburn:removeDevice', args: ['studio-mac'], argv: ['devices', 'rm', 'studio-mac'] },
+  { channel: 'codeburn:setPlan', args: ['claude-max', 'claude'], argv: ['plan', 'set', 'claude-max', '--provider', 'claude'] },
+  { channel: 'codeburn:resetPlan', args: ['cursor'], argv: ['plan', 'reset', '--provider', 'cursor'] },
+  { channel: 'codeburn:exportData', args: ['json', 'all', '/tmp/codeburn-export'], argv: ['export', '-f', 'json', '-o', '/tmp/codeburn-export', '--provider', 'all'] },
 ]
 
 function flattenMenuItems(items: any[]): any[] {

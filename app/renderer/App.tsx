@@ -81,6 +81,13 @@ export function App() {
   const refreshOverview = overview.refresh
 
   useEffect(() => {
+    let saved: string | null = null
+    try { saved = globalThis.localStorage?.getItem('codeburn.theme') ?? null } catch { /* storage can be unavailable */ }
+    if (saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved)
+    else document.documentElement.removeAttribute('data-theme')
+  }, [])
+
+  useEffect(() => {
     if (!overview.data) return
     const found = Object.keys(overview.data.current.providers)
     setDetectedProviders(current => {
@@ -143,7 +150,7 @@ export function App() {
         {section === 'plans' ? (
           <Plans period={period} refreshToken={refreshToken} />
         ) : section === 'settings' ? (
-          <Settings period={period} refreshToken={refreshToken} />
+          <Settings period={period} refreshToken={refreshToken} onNavigate={setSection} />
         ) : (
           <>
             <TopBar

@@ -455,5 +455,10 @@ export interface CodeburnBridge {
   resetCurrency(): Promise<ActionResult>
   addAlias(from: string, to: string): Promise<ActionResult>
   removeAlias(from: string): Promise<ActionResult>
+  removeDevice(name: string): Promise<ActionResult>
+  setPlan(id: string, provider: string): Promise<ActionResult>
+  resetPlan(provider: string): Promise<ActionResult>
+  exportData(format: string, provider: string, outPath: string): Promise<ActionResult>
+  chooseDirectory(): Promise<string | null>
   cliStatus(): Promise<{ found: boolean; path: string | null; error?: string }>
 }

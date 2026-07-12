@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron'
 import path from 'node:path'
 
 import { CliError, resolveCodeburnPath, spawnCli, spawnCliAction, type ActionResult } from './cli'
@@ -85,6 +85,12 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
     'codeburn:resetCurrency': runAction(() => ['currency', '--reset']),
     'codeburn:addAlias': runAction((from: string, to: string) => ['model-alias', from, to]),
     'codeburn:removeAlias': runAction((from: string) => ['model-alias', '--remove', from]),
+    'codeburn:removeDevice': runAction((name: string) => ['devices', 'rm', name]),
+    'codeburn:setPlan': runAction((id: string, provider: string) => ['plan', 'set', id, '--provider', provider]),
+    'codeburn:resetPlan': runAction((provider: string) => ['plan', 'reset', '--provider', provider]),
+    'codeburn:exportData': runAction((format: string, provider: string, outPath: string) => [
+      'export', '-f', format, '-o', outPath, '--provider', provider,
+    ]),
     'codeburn:cliStatus': async () => {
       const p = deps.resolveCodeburnPath()
       return { ok: true, value: { found: p !== null, path: p } }
@@ -97,6 +103,10 @@ function registerHandlers(): void {
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(channel, (_event, ...args) => handler(...args))
   }
+  ipcMain.handle('codeburn:chooseDirectory', async () => {
+    const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+    return { ok: true, value: res.canceled ? null : (res.filePaths[0] ?? null) }
+  })
 }
 
 export function createApplicationMenuTemplate(isDev = Boolean(process.env.VITE_DEV_SERVER_URL)): MenuItemConstructorOptions[] {

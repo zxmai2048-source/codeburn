@@ -3,13 +3,14 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ActionResult, AliasRow, CombinedUsage, DeviceScanResult, Identity, MenubarPayload, StatusJson } from '../lib/types'
+import type { ActionResult, AliasRow, CombinedUsage, DeviceScanResult, Identity, MenubarPayload, ShareStatus, StatusJson } from '../lib/types'
 import { Settings } from './Settings'
 
 const mocks = vi.hoisted(() => ({
   getIdentity: vi.fn<() => Promise<Identity>>(),
   getDevices: vi.fn<(period: string) => Promise<CombinedUsage>>(),
   getDevicesScan: vi.fn<() => Promise<DeviceScanResult>>(),
+  getShareStatus: vi.fn<() => Promise<ShareStatus>>(),
   getPlans: vi.fn<(period: string) => Promise<StatusJson>>(),
   getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
   getAliases: vi.fn<() => Promise<AliasRow[]>>(),
@@ -17,6 +18,11 @@ const mocks = vi.hoisted(() => ({
   resetCurrency: vi.fn<() => Promise<ActionResult>>(),
   addAlias: vi.fn<(from: string, to: string) => Promise<ActionResult>>(),
   removeAlias: vi.fn<(from: string) => Promise<ActionResult>>(),
+  removeDevice: vi.fn<(name: string) => Promise<ActionResult>>(),
+  setPlan: vi.fn<(id: string, provider: string) => Promise<ActionResult>>(),
+  resetPlan: vi.fn<(provider: string) => Promise<ActionResult>>(),
+  chooseDirectory: vi.fn<() => Promise<string | null>>(),
+  exportData: vi.fn<(format: string, provider: string, path: string) => Promise<ActionResult>>(),
 }))
 vi.mock('../lib/ipc', async orig => {
   const actual = await orig<typeof import('../lib/ipc')>()
@@ -47,24 +53,30 @@ describe('Settings', () => {
     mocks.getIdentity.mockResolvedValue(identity)
     mocks.getDevices.mockResolvedValue(devices)
     mocks.getDevicesScan.mockResolvedValue(scan)
-    mocks.getPlans.mockResolvedValue({ currency: 'EUR', today: { cost: 0, savings: 0, calls: 0 }, month: { cost: 0, savings: 0, calls: 0 } })
+    mocks.getShareStatus.mockResolvedValue({ sharing: true, name: 'Toruk MacBook Pro', port: 9732, always: false, peers: 1, pending: [] })
+    mocks.getPlans.mockResolvedValue({ currency: 'EUR', today: { cost: 0, savings: 0, calls: 0 }, month: { cost: 0, savings: 0, calls: 0 }, plans: { claude: { id: 'claude-max', provider: 'claude', budget: 200, spent: 48, percentUsed: 24, status: 'under', projectedMonthEnd: 120, daysUntilReset: 19, periodStart: '2026-07-01', periodEnd: '2026-08-01' } } })
     mocks.getOverview.mockResolvedValue(overview)
     mocks.getAliases.mockResolvedValue([{ from: 'proxy-opus', to: 'claude-opus-4-6' }])
     mocks.setCurrency.mockResolvedValue(actionOk)
     mocks.resetCurrency.mockResolvedValue(actionOk)
     mocks.addAlias.mockResolvedValue(actionOk)
     mocks.removeAlias.mockResolvedValue(actionOk)
+    mocks.removeDevice.mockResolvedValue(actionOk)
+    mocks.setPlan.mockResolvedValue(actionOk)
+    mocks.resetPlan.mockResolvedValue(actionOk)
+    mocks.chooseDirectory.mockResolvedValue('/Users/toruk/Exports')
+    mocks.exportData.mockResolvedValue(actionOk)
     localStorage.clear()
     document.documentElement.removeAttribute('data-theme')
   })
 
-  it('switches panes from the rail and keeps minimal placeholders honest', async () => {
+  it('switches panes from the rail and renders the completed Plans pane', async () => {
     const user = userEvent.setup()
     render(<Settings period="month" />)
     expect(screen.getByRole('heading', { name: 'General' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Plans' }))
     expect(screen.getByRole('heading', { name: 'Plans' })).toBeInTheDocument()
-    expect(screen.getByText('Wired up in the next pass.')).toBeInTheDocument()
+    expect((await screen.findAllByText('Claude Max 20x')).length).toBeGreaterThan(0)
   })
 
   it('shows current currency and sends currency changes to the CLI', async () => {
@@ -111,20 +123,52 @@ describe('Settings', () => {
     expect(mocks.removeAlias).toHaveBeenCalledWith('proxy-opus')
   })
 
-  it('renders device identity, scan results, paired devices, and Part 2 affordances', async () => {
+  it('lists, removes, and adds plans through the action bridge', async () => {
     const user = userEvent.setup()
-    const { container } = render(<Settings period="month" />)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<Settings period="month" />)
+    await user.click(screen.getByRole('button', { name: 'Plans' }))
+    expect((await screen.findAllByText('Claude Max 20x')).length).toBeGreaterThan(0)
+    expect(screen.getByText('$200/month · claude · 24% used')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(mocks.resetPlan).toHaveBeenCalledWith('claude')
+    await user.selectOptions(screen.getByLabelText('Add a plan'), 'cursor-pro')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(mocks.setPlan).toHaveBeenCalledWith('cursor-pro', 'cursor')
+  })
+
+  it('chooses an export folder and exports the selected format and provider', async () => {
+    const user = userEvent.setup()
+    render(<Settings period="month" />)
+    await user.click(screen.getAllByRole('button', { name: 'Export' }).at(-1)!)
+    await user.click(screen.getByRole('button', { name: 'Choose folder…' }))
+    expect(mocks.chooseDirectory).toHaveBeenCalledOnce()
+    expect(await screen.findByText('/Users/toruk/Exports')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'JSON' }))
+    await user.selectOptions(screen.getByLabelText('Provider'), 'claude')
+    await user.click(screen.getAllByRole('button', { name: 'Export' }).at(-1)!)
+    expect(mocks.exportData).toHaveBeenCalledWith('json', 'claude', '/Users/toruk/Exports')
+    expect(await screen.findByText('Exported to /Users/toruk/Exports')).toBeInTheDocument()
+  })
+
+  it('renders real device status and removes paired devices without fake pairing controls', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<Settings period="month" />)
     await user.click(screen.getByRole('button', { name: 'Devices' }))
     expect(await screen.findByText('Toruk MacBook Pro')).toBeInTheDocument()
-    expect(screen.getByText('Visible on the local network as Toruk MacBook Pro.local')).toBeInTheDocument()
+    expect(screen.getByText('Local device name: Toruk MacBook Pro')).toBeInTheDocument()
     expect(await screen.findByText('Mac Studio')).toBeInTheDocument()
-    expect(screen.getByText('wants to pair · fingerprint 7F:2A:…:C4')).toBeInTheDocument()
+    expect(screen.getByText('fingerprint 7F:2A:…:C4')).toBeInTheDocument()
     expect(await screen.findByText('toruk-mini')).toBeInTheDocument()
     expect(screen.getByText('34 sessions · $41.20 this month')).toBeInTheDocument()
-    expect(screen.getByText('Visibility: on')).toBeInTheDocument()
-    expect(screen.getByText('Approve')).toBeInTheDocument()
-    expect(screen.getByText('Pull now')).toBeInTheDocument()
-    expect(container.querySelector('.tglon')).toBeInTheDocument()
+    expect(screen.getByText('Visible')).toBeInTheDocument()
+    expect(screen.getByText(/pairing is interactive/)).toBeInTheDocument()
+    expect(screen.queryByText('Approve')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pull now')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(mocks.removeDevice).toHaveBeenCalledWith('toruk-mini')
+    expect(screen.getByText('Combined view active · 2 devices')).toBeInTheDocument()
   })
 
   it('excludes already-paired scans and renders empty device states', async () => {

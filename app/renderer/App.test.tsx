@@ -5,6 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import type { DateRange, MenubarPayload, SpendFlow } from './lib/types'
 
+const stored = new Map<string, string>()
+vi.stubGlobal('localStorage', {
+  getItem: (key: string) => stored.get(key) ?? null,
+  setItem: (key: string, value: string) => stored.set(key, value),
+  clear: () => stored.clear(),
+})
+
 const mocks = vi.hoisted(() => ({
   getOverview: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<MenubarPayload>>(),
   getSpendFlow: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<SpendFlow>>(),
@@ -117,6 +124,15 @@ describe('App shortcuts', () => {
         reachableCount: 1,
       },
     })
+    localStorage.clear()
+    document.documentElement.removeAttribute('data-theme')
+  })
+
+  it('applies the persisted theme on app boot before Settings mounts', async () => {
+    localStorage.setItem('codeburn.theme', 'dark')
+    render(<App />)
+    await waitFor(() => expect(document.documentElement).toHaveAttribute('data-theme', 'dark'))
+    expect(screen.queryByRole('heading', { name: 'General' })).not.toBeInTheDocument()
   })
 
   it('switches sections with command-number shortcuts', async () => {

@@ -3,13 +3,25 @@ import { useEffect, useState } from 'react'
 import { Hint } from '../components/Hint'
 import { CliErrorText, cliErrorDisplay } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
+import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { ActionResult, AliasRow, CliError, CombinedUsage, DeviceScanResult, Identity, MenubarPayload, Period, StatusJson } from '../lib/types'
+import type { ActionResult, AliasRow, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
 
 type Pane = 'general' | 'providers' | 'aliases' | 'plans' | 'devices' | 'export' | 'privacy'
 type Theme = 'system' | 'light' | 'dark'
+
+type PlanPreset = { id: Exclude<PlanId, 'custom' | 'none'>; label: string; provider: Exclude<PlanProvider, 'all' | 'codex'> }
+
+const PLAN_PRESETS: PlanPreset[] = [
+  { id: 'claude-pro', label: 'Claude Pro', provider: 'claude' },
+  { id: 'claude-max', label: 'Claude Max 20x', provider: 'claude' },
+  { id: 'claude-max-5x', label: 'Claude Max 5x', provider: 'claude' },
+  { id: 'cursor-pro', label: 'Cursor Pro', provider: 'cursor' },
+  { id: 'supergrok', label: 'SuperGrok', provider: 'grok' },
+  { id: 'supergrok-heavy', label: 'SuperGrok Heavy', provider: 'grok' },
+]
 
 function readSetting(key: string): string | null {
   try { return globalThis.localStorage?.getItem(key) ?? null } catch { return null }
@@ -43,11 +55,8 @@ function shortFingerprint(fingerprint: string): string {
   return `${parts[0]}:${parts[1]}:…:${parts[parts.length - 1]}`
 }
 
-export function Settings({ period, refreshToken = 0 }: { period: Period; refreshToken?: number }) {
+export function Settings({ period, refreshToken = 0, onNavigate }: { period: Period; refreshToken?: number; onNavigate?: (section: Section) => void }) {
   const [pane, setPane] = useState<Pane>('general')
-  const identity = usePolled<Identity>(() => codeburn.getIdentity(), [refreshToken])
-  const scan = usePolled<DeviceScanResult>(() => codeburn.getDevicesScan(), [refreshToken])
-  const devices = usePolled<CombinedUsage>(() => codeburn.getDevices(period), [period, refreshToken])
 
   return (
     <>
@@ -64,9 +73,9 @@ export function Settings({ period, refreshToken = 0 }: { period: Period; refresh
           {pane === 'general' && <GeneralPane period={period} refreshToken={refreshToken} />}
           {pane === 'providers' && <ProvidersPane period={period} refreshToken={refreshToken} />}
           {pane === 'aliases' && <AliasesPane refreshToken={refreshToken} />}
-          {pane === 'plans' && <PlaceholderPane title="Plans" subtitle="Set a monthly budget plan per provider." />}
-          {pane === 'devices' && <DevicesPane identity={identity} scan={scan} devices={devices} period={period} />}
-          {pane === 'export' && <PlaceholderPane title="Export" subtitle="Save your usage as CSV or JSON." />}
+          {pane === 'plans' && <PlansPane period={period} refreshToken={refreshToken} onNavigate={onNavigate} />}
+          {pane === 'devices' && <DevicesPane period={period} refreshToken={refreshToken} />}
+          {pane === 'export' && <ExportPane period={period} refreshToken={refreshToken} />}
           {pane === 'privacy' && <PrivacyPane />}
         </main>
       </div>
@@ -159,12 +168,93 @@ function AliasesPane({ refreshToken }: { refreshToken: number }) {
   </section>
 }
 
-function PlaceholderPane({ title, subtitle }: { title: string; subtitle: string }) {
-  return <section className="set-p on"><div><h3 className="set-h">{title}</h3><p className="set-sub">{subtitle}</p></div><p className="set-cap">Wired up in the next pass.</p></section>
+function planSummaries(status: StatusJson): JsonPlanSummary[] {
+  if (status.plans) return Object.values(status.plans).filter((plan): plan is JsonPlanSummary => Boolean(plan))
+  return status.plan ? [status.plan] : []
 }
 
-function DevicesPane({ identity, scan, devices, period }: { identity: ReturnType<typeof usePolled<Identity>>; scan: ReturnType<typeof usePolled<DeviceScanResult>>; devices: ReturnType<typeof usePolled<CombinedUsage>>; period: Period }) {
-  return <section className="set-p on"><div><h3 className="set-h">Devices</h3><p className="set-sub">Combine usage across your machines.</p></div><ThisDevicePanel identity={identity} /><DiscoveredPanel scan={scan} /><PairedPanel devices={devices} period={period} /></section>
+function PlansPane({ period, refreshToken, onNavigate }: { period: Period; refreshToken: number; onNavigate?: (section: Section) => void }) {
+  const [nonce, setNonce] = useState(0)
+  const plans = usePolled<StatusJson>(() => codeburn.getPlans(period), [period, refreshToken, nonce])
+  const [presetId, setPresetId] = useState(PLAN_PRESETS[0]!.id)
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
+  const configured = plans.data ? planSummaries(plans.data) : []
+
+  const finish = (result: ActionResult) => {
+    setMessage({ text: result.ok ? (result.stdout.trim() || 'Plan updated') : (result.stderr || 'Plan action failed'), error: !result.ok })
+    if (result.ok) setNonce(value => value + 1)
+  }
+  const remove = (plan: JsonPlanSummary) => {
+    if (!window.confirm(`Remove the ${plan.provider} plan?`)) return
+    void codeburn.resetPlan(plan.provider).then(finish)
+  }
+  const add = () => {
+    const preset = PLAN_PRESETS.find(item => item.id === presetId)!
+    void codeburn.setPlan(preset.id, preset.provider).then(finish)
+  }
+
+  return <section className="set-p on">
+    <div><h3 className="set-h">Plans</h3><p className="set-sub">Set a monthly budget plan per provider. codeburn compares it to your API-equivalent spend.</p></div>
+    <div className="card">
+      <div className="about-sec">
+        {plans.error ? <SettingsErrorText error={plans.error} /> : !plans.data ? <p className="set-cap">Loading plans…</p> : configured.length === 0 ? <p className="set-cap">No plans configured.</p> : configured.map(plan => <div className="about-row" key={plan.provider}><span className="tx">{PLAN_PRESETS.find(item => item.id === plan.id)?.label ?? plan.id}<small>${plan.budget}/month · {plan.provider} · {plan.percentUsed}% used</small></span><span className="r"><button className="btnp" onClick={() => remove(plan)}>Remove</button></span></div>)}
+      </div>
+      <div className="about-sec set-last-sec">
+        <div className="about-row"><label className="tx" htmlFor="settings-plan-preset">Add a plan</label><span className="r"><select id="settings-plan-preset" className="set-input" value={presetId} onChange={event => setPresetId(event.target.value as PlanPreset['id'])}>{PLAN_PRESETS.map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select><button className="btnp btnp-primary" onClick={add}>Add</button></span></div>
+        {message && <p className={message.error ? 'set-action-msg error' : 'set-action-msg'}>{message.text}</p>}
+      </div>
+    </div>
+    <p className="set-cap">Presets: Claude Pro, Claude Max 20x, Claude Max 5x, Cursor Pro, SuperGrok, and SuperGrok Heavy. <button className="set-text-button" onClick={() => onNavigate?.('plans')}>Open Plans →</button></p>
+  </section>
+}
+
+function ExportPane({ period, refreshToken }: { period: Period; refreshToken: number }) {
+  const overview = usePolled<MenubarPayload>(() => codeburn.getOverview(period, 'all'), [period, refreshToken])
+  const [format, setFormat] = useState<'csv' | 'json'>('csv')
+  const [provider, setProvider] = useState('all')
+  const [destination, setDestination] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
+  const providers = Object.keys(overview.data?.current.providers ?? {})
+
+  const chooseDirectory = async () => {
+    const selected = await codeburn.chooseDirectory()
+    if (selected) setDestination(selected)
+  }
+  const exportNow = async () => {
+    if (!destination) return
+    setExporting(true)
+    setMessage(null)
+    try {
+      const result = await codeburn.exportData(format, provider, destination)
+      setMessage({ text: result.ok ? `Exported to ${destination}` : (result.stderr || 'Export failed'), error: !result.ok })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return <section className="set-p on">
+    <div><h3 className="set-h">Export</h3><p className="set-sub">Save your usage as CSV or JSON. Everything stays on your machine.</p></div>
+    <div className="card">
+      <div className="about-sec">
+        <div className="about-row"><span className="tx">Format</span><span className="r"><span className="seg"><button className={format === 'csv' ? 'on' : undefined} onClick={() => setFormat('csv')}>CSV</button><button className={format === 'json' ? 'on' : undefined} onClick={() => setFormat('json')}>JSON</button></span></span></div>
+        <div className="about-row"><label className="tx" htmlFor="settings-export-provider">Provider</label><span className="r"><select id="settings-export-provider" className="set-input" value={provider} onChange={event => setProvider(event.target.value)}><option value="all">All providers</option>{providers.map(value => <option value={value} key={value}>{value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select></span></div>
+        <div className="about-row"><span className="tx">Destination</span><span className="r set-export-destination"><span className="set-mono">{destination ?? 'Choose a folder…'}</span><button className="btnp" onClick={() => void chooseDirectory()}>Choose folder…</button></span></div>
+      </div>
+      <div className="about-sec set-last-sec"><div className="about-row"><span className="tx" /><span className="r"><button className="btnp btnp-primary" disabled={!destination || exporting} onClick={() => void exportNow()}>{exporting ? 'Exporting…' : 'Export'}</button></span></div>{message && <p className={message.error ? 'set-action-msg error' : 'set-action-msg'}>{message.text}</p>}</div>
+    </div>
+    <p className="set-cap">CSV writes a folder (summary, daily, models, projects, sessions, tools, mcp). JSON writes one file (schema codeburn.export.v2).</p>
+  </section>
+}
+
+function DevicesPane({ period, refreshToken }: { period: Period; refreshToken: number }) {
+  const [nonce, setNonce] = useState(0)
+  const identity = usePolled<Identity>(() => codeburn.getIdentity(), [refreshToken])
+  const shareStatus = usePolled<ShareStatus>(() => codeburn.getShareStatus(), [refreshToken])
+  const scan = usePolled<DeviceScanResult>(() => codeburn.getDevicesScan(), [refreshToken, nonce])
+  const devices = usePolled<CombinedUsage>(() => codeburn.getDevices(period), [period, refreshToken, nonce])
+  const refresh = () => setNonce(value => value + 1)
+  return <section className="set-p on"><div><h3 className="set-h">Devices</h3><p className="set-sub">Combine usage across your machines.</p></div><ThisDevicePanel identity={identity} shareStatus={shareStatus} /><DiscoveredPanel scan={scan} /><PairedPanel devices={devices} period={period} onRefresh={refresh} /></section>
 }
 
 function PrivacyPane() {
@@ -179,19 +269,28 @@ function PrivacyClaim({ title, detail, icon }: { title: string; detail: string; 
   return <div className="set-claim"><svg viewBox="0 0 24 24" aria-hidden="true">{icon}</svg><div><div className="set-claim-t">{title}</div><div className="set-claim-d">{detail}</div></div></div>
 }
 
-function ThisDevicePanel({ identity }: { identity: ReturnType<typeof usePolled<Identity>> }) {
-  return <Panel title="This device">{identity.data ? <div className="li"><div className="lx"><b>{identity.data.name}</b><span>Visible on the local network as {identity.data.name}.local</span><span>{identity.data.fingerprint}</span></div><span className="btn btn-s" aria-disabled="true">Visibility: on</span></div> : identity.error ? <SettingsErrorText error={identity.error} /> : <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>Reading this device identity…</p>}</Panel>
+function ThisDevicePanel({ identity, shareStatus }: { identity: ReturnType<typeof usePolled<Identity>>; shareStatus: ReturnType<typeof usePolled<ShareStatus>> }) {
+  const status = shareStatus.data ? <span className="set-status"><span className={shareStatus.data.sharing ? 'set-dot ok' : 'set-dot'} />{shareStatus.data.sharing ? 'Visible' : 'Not sharing'}</span> : null
+  return <Panel title="This device" right={status}>{identity.data ? <div className="li"><div className="lx"><b>{identity.data.name}</b><span>Local device name: {identity.data.name}</span><span>{identity.data.fingerprint}</span></div></div> : identity.error ? <SettingsErrorText error={identity.error} /> : <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>Reading this device identity…</p>}{shareStatus.error && <SettingsErrorText error={shareStatus.error} />}</Panel>
 }
 
 function DiscoveredPanel({ scan }: { scan: ReturnType<typeof usePolled<DeviceScanResult>> }) {
   const found = scan.data?.found.filter(device => !device.paired) ?? []
-  return <Panel title="Discovered nearby" right={scan.loading ? 'listening…' : undefined}>{!scan.data && scan.error ? <SettingsErrorText error={scan.error} /> : !scan.data ? <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>listening…</p> : found.length === 0 ? <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>No nearby devices found.</p> : found.map(device => <div className="li" key={`${device.host}:${device.port}:${device.fingerprint}`}><div className="lx"><b>{device.name}</b><span className="hot">wants to pair · fingerprint {shortFingerprint(device.fingerprint)}</span></div><span className="btn btn-p" aria-disabled="true">Approve</span></div>)}</Panel>
+  return <Panel title="Discovered nearby" right={scan.loading ? 'listening…' : undefined}>{!scan.data && scan.error ? <SettingsErrorText error={scan.error} /> : !scan.data ? <p className="set-cap">listening…</p> : found.length === 0 ? <p className="set-cap">No nearby devices found.</p> : found.map(device => <div className="li" key={`${device.host}:${device.port}:${device.fingerprint}`}><div className="lx"><b>{device.name}</b><span>fingerprint {shortFingerprint(device.fingerprint)}</span></div></div>)}<p className="set-cap set-device-caption">To pair a device, run <code>codeburn devices add</code> in a terminal — pairing is interactive (approve on the other device).</p></Panel>
 }
 
-function PairedPanel({ devices, period }: { devices: ReturnType<typeof usePolled<CombinedUsage>>; period: Period }) {
+function PairedPanel({ devices, period, onRefresh }: { devices: ReturnType<typeof usePolled<CombinedUsage>>; period: Period; onRefresh: () => void }) {
+  const [error, setError] = useState('')
   const paired = devices.data?.perDevice.filter(device => !device.local) ?? []
-  const deviceScope = devices.data ? `· ${devices.data.combined.deviceCount} devices` : '· paired devices'
-  return <Panel title="Paired">{!devices.data && devices.error ? <SettingsErrorText error={devices.error} /> : !devices.data ? <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>Loading paired devices…</p> : paired.length === 0 ? <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>No paired devices yet.</p> : paired.map(device => <div className="li" key={device.id}><div className="lx"><b>{device.name}</b><span>{device.sessions.toLocaleString('en-US')} sessions · {formatUsd(device.cost)} {periodLabel(period)}</span></div><span className="btn btn-s" aria-disabled="true">Pull now</span></div>)}<div className="li"><div className="lx"><b>Combine usage from paired devices</b><span>scope captions gain “{deviceScope}” when on</span></div><span className="tglon" aria-disabled="true" /></div></Panel>
+  const remove = (name: string) => {
+    if (!window.confirm(`Remove paired device ${name}?`)) return
+    void codeburn.removeDevice(name).then(result => {
+      if (!result.ok) { setError(result.stderr || 'Unable to remove device'); return }
+      setError('')
+      onRefresh()
+    })
+  }
+  return <Panel title="Paired devices" right={<button className="set-text-button" onClick={onRefresh}>Refresh</button>}>{!devices.data && devices.error ? <SettingsErrorText error={devices.error} /> : !devices.data ? <p className="set-cap">Loading paired devices…</p> : paired.length === 0 ? <p className="set-cap">No paired devices yet.</p> : paired.map(device => <div className="li" key={device.id}><div className="lx"><b>{device.name}</b><span>{device.sessions.toLocaleString('en-US')} sessions · {formatUsd(device.cost)} {periodLabel(period)}</span></div><button className="btnp" onClick={() => remove(device.name)}>Remove</button></div>)}{devices.data && devices.data.combined.deviceCount > 1 && <div className="li"><div className="lx"><b>Combined view active · {devices.data.combined.deviceCount} devices</b></div></div>}{error && <p className="set-action-msg error">{error}</p>}</Panel>
 }
 
 function SettingsErrorText({ error }: { error: CliError }) {

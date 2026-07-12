@@ -232,6 +232,10 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .set-text-button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11.5px; cursor: pointer; }
 .set-action-msg { margin: 6px 0 0; color: var(--ok); font-size: 11.5px; }
 .set-action-msg.error { color: var(--bad); }
+.set-export-destination { min-width: 0; }
+.set-export-destination .set-mono { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-device-caption { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line2); }
+.set-device-caption code { color: var(--ink); font-family: var(--mono); }
 .tgl { width: 30px; height: 18px; border-radius: 9px; background: var(--line); position: relative; flex: 0 0 auto; }
 .tgl.on { background: var(--accent); }
 .tgl::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
