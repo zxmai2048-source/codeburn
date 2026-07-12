@@ -90,7 +90,7 @@ export function App() {
 
   useEffect(() => {
     if (!overview.data) return
-    const found = Object.keys(overview.data.current.providers)
+    const found = Object.entries(overview.data.current.providers).filter(([, value]) => value > 0).map(([key]) => key)
     setDetectedProviders(current => {
       const next = [...current]
       for (const item of found) if (!next.includes(item)) next.push(item)
