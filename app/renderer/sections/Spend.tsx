@@ -119,7 +119,7 @@ function SpendPage({
         <Panel title="Daily spend by model" className="spend-chart-panel">
           {daily.length ? <StackedBars daily={daily} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
         </Panel>
-        <Panel title="By project" right={projects.length ? `top ${projects.length}` : undefined}>
+        <Panel title="By project" right={projects.length ? `top ${projects.length}` : undefined} className="spend-scroll">
           {projects.length ? (
             projects.map((project, i) => (
               <ListRow
@@ -165,7 +165,7 @@ function RowsPanel({
   rows: Array<{ key: string; title: string; sub: string; value?: string }>
 }) {
   return (
-    <Panel title={title}>
+    <Panel title={title} className="spend-scroll">
       {rows.map((row, i) => (
         <ListRow key={row.key} no={String(i + 1).padStart(2, '0')} title={row.title} sub={row.sub} value={row.value} />
       ))}

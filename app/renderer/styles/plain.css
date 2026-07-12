@@ -295,6 +295,10 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .panel { border-color: var(--line); box-shadow: var(--card-shadow); }
 .spend-top-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .spend-breakdowns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.spend-scroll > .pbody { max-height: 300px; overflow-y: auto; }
+.spend-scroll > .pbody::-webkit-scrollbar { width: 6px; }
+.spend-scroll > .pbody::-webkit-scrollbar-thumb { background: var(--mut2); border-radius: 3px; }
+.spend-scroll > .pbody::-webkit-scrollbar-track { background: var(--line); }
 .error-boundary { display: flex; padding: 20px; }
 .error-card { max-width: 760px; padding: 16px 18px; }
 .error-title { margin: 0 0 8px; font-size: 14px; font-weight: 620; color: var(--ink); }
