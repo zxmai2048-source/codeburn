@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from 'electron'
 import path from 'node:path'
 
 import { CliError, resolveCodeburnPath, spawnCli, spawnCliAction, type ActionResult } from './cli'
@@ -107,6 +107,7 @@ function registerHandlers(): void {
     const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
     return { ok: true, value: res.canceled ? null : (res.filePaths[0] ?? null) }
   })
+  ipcMain.handle('open-external', (_event, url: string) => shell.openExternal(url))
 }
 
 export function createApplicationMenuTemplate(isDev = Boolean(process.env.VITE_DEV_SERVER_URL)): MenuItemConstructorOptions[] {

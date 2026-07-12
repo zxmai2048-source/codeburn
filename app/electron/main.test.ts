@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: vi.fn() },
   ipcMain: { handle: () => {} },
   Menu: { buildFromTemplate: (template: unknown) => template, setApplicationMenu: () => {} },
+  shell: { openExternal: vi.fn() },
 }))
 
 import { createApplicationMenuTemplate, createBridgeHandlers } from './main'

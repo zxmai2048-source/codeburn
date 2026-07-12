@@ -461,4 +461,5 @@ export interface CodeburnBridge {
   exportData(format: string, provider: string, outPath: string): Promise<ActionResult>
   chooseDirectory(): Promise<string | null>
   cliStatus(): Promise<{ found: boolean; path: string | null; error?: string }>
+  openExternal(url: string): Promise<void>
 }

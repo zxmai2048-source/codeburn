@@ -43,6 +43,7 @@ const bridge = {
   exportData: (format: string, provider: string, outPath: string) => invoke('codeburn:exportData', format, provider, outPath),
   chooseDirectory: () => invoke('codeburn:chooseDirectory'),
   cliStatus: () => invoke('codeburn:cliStatus'),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   platform: process.platform,
 }
 

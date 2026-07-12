@@ -156,6 +156,67 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .foot .social a:hover { color: var(--accent); background: var(--hover); }
 .foot .social svg { width: 15px; height: 15px; fill: currentColor; stroke: none; }
 
+/* About overlay: a compact, portal-free card using the reskin's surface tokens. */
+.about-modal-backdrop {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px;
+  background: rgba(8, 10, 14, .56);
+}
+.about-modal {
+  position: relative; width: min(720px, 100%); overflow: hidden; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--panel); color: var(--ink);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .28), 0 3px 12px rgba(0, 0, 0, .16);
+}
+.about-modal-close {
+  position: absolute; top: 10px; right: 10px; z-index: 1; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 7px; background: transparent; color: var(--mut); font: inherit;
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+.about-modal-close:hover { background: var(--hover); color: var(--ink); }
+.about-modal-close:focus-visible,
+.about-modal-link:focus-visible,
+.about-modal-update-button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.about-modal-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.about-modal-hero {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px;
+  border-right: 1px solid var(--line2); text-align: center;
+}
+.about-modal-logo { width: 52px; height: 52px; margin-bottom: 12px; object-fit: contain; }
+.about-modal-name { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.about-modal-version { margin-top: 5px; color: var(--mut2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.about-modal-tagline { max-width: 32ch; margin: 11px auto 0; color: var(--mut); font-size: 12.5px; line-height: 1.5; }
+.about-modal-side { display: flex; flex-direction: column; }
+.about-modal-section { padding: 14px 18px; border-bottom: 1px solid var(--line2); }
+.about-modal-section:last-child { border-bottom: 0; }
+.about-modal-section-title {
+  margin-bottom: 8px; color: var(--mut2); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .05em; text-transform: uppercase;
+}
+.about-modal-link {
+  position: relative; display: flex; align-items: center; gap: 11px; padding: 8px 0;
+  color: var(--ink); font-size: 12.5px; text-decoration: none;
+}
+.about-modal-link + .about-modal-link::before {
+  content: ''; position: absolute; top: 0; right: 0; left: 27px; height: 1px; background: var(--line2);
+}
+.about-modal-link svg { width: 16px; height: 16px; flex: 0 0 auto; fill: currentColor; stroke: none; }
+.about-modal-link:hover { color: var(--accent); }
+.about-modal-external { margin-left: auto; color: var(--mut2); }
+.about-modal-updates { margin-top: auto; }
+.about-modal-update-button {
+  display: inline-flex; padding: 6px 11px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--panel); color: var(--ink); font: inherit; font-size: 11.5px; font-weight: 540; cursor: pointer;
+}
+.about-modal-update-button:hover { border-color: var(--accent); color: var(--accent); }
+.about-modal-credit {
+  padding: 13px 18px; border-top: 1px solid var(--line2); color: var(--mut2);
+  font-size: 10.5px; text-align: center;
+}
+
+@media (max-width: 680px) {
+  .about-modal-grid { grid-template-columns: 1fr; }
+  .about-modal-hero { padding: 24px; border-right: 0; border-bottom: 1px solid var(--line2); }
+}
+
 /* macOS integrated title bar (hiddenInset): clear the traffic lights and make
    the top chrome draggable, keeping interactive controls clickable. */
 :root[data-platform='darwin'] .sb { padding-top: 34px; -webkit-app-region: drag; }
