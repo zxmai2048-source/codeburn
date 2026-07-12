@@ -49,6 +49,7 @@ function makePayload(): MenubarPayload {
       topFindings: [
         { title: 'Opus is doing your small talk', impact: 'high', savingsUSD: 9.1 },
         { title: 'Cache hit is low in agentseal-dash', impact: 'medium', savingsUSD: 8.7 },
+        { title: 'Batch tiny requests', impact: 'low', savingsUSD: 2.4 },
       ],
     },
     history: { daily: [] },
@@ -101,7 +102,9 @@ describe('Optimize', () => {
     render(<Optimize period="30days" provider="all" />)
 
     expect(await screen.findByText('Opus is doing your small talk')).toBeInTheDocument()
-    expect(screen.getByText('high impact')).toBeInTheDocument()
+    expect(screen.getByText('High')).toHaveClass('opt-impact-high')
+    expect(screen.getByText('Medium')).toHaveClass('opt-impact-medium')
+    expect(screen.getByText('Low')).toHaveClass('opt-impact-low')
     expect(screen.getByText('$9.10')).toBeInTheDocument()
     expect(screen.getByText('Cache hit is low in agentseal-dash')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Waste $94.40' })).toBeInTheDocument()
@@ -172,9 +175,10 @@ describe('Optimize', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Fixes 3' }))
 
-    expect(screen.getByText('3 findings · $94.40 potential')).toBeInTheDocument()
-    expect(screen.queryByText('3 fixes ready')).not.toBeInTheDocument()
-    expect(screen.queryByText('$94.40 recoverable waste')).not.toBeInTheDocument()
+    expect(screen.getByText('Opus is doing your small talk')).toBeInTheDocument()
+    expect(screen.getByText('Cache hit is low in agentseal-dash')).toBeInTheDocument()
+    expect(screen.getByText('High')).toHaveClass('opt-impact-high')
+    expect(screen.getByText('$9.10')).toHaveClass('opt-finding-savings')
 
     getOverview.mockResolvedValue(emptyPayload())
     rerender(<Optimize period="week" provider="all" />)

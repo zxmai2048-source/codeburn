@@ -398,14 +398,12 @@ function aggregateModels(daily: DailyHistoryEntry[]): AggregatedModel[] {
 
 function ModelsTable({ models }: { models: AggregatedModel[] }) {
   if (!models.length) return <EmptyNote>No model usage in this range yet.</EmptyNote>
-  const maxCost = models[0].cost
 
   return (
     <div className="ov-model-scroll">
       <table className="ov-models" aria-label="Models this period">
         <thead>
           <tr>
-            <th className="ov-model-bar-head" aria-label="Relative cost" />
             <th>Model</th>
             <th className="num">Input tok</th>
             <th className="num">Output tok</th>
@@ -416,9 +414,6 @@ function ModelsTable({ models }: { models: AggregatedModel[] }) {
         <tbody>
           {models.map(model => (
             <tr key={model.name}>
-              <td className="ov-model-bar-cell">
-                <span className="ov-model-bar" style={{ width: `${maxCost > 0 ? model.cost / maxCost * 100 : 0}%` }} />
-              </td>
               <td className="ov-model-name">{model.name}</td>
               <td className="num mono">{formatTokens(model.inputTokens)}</td>
               <td className="num mono">{formatTokens(model.outputTokens)}</td>

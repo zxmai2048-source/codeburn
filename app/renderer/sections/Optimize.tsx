@@ -82,23 +82,34 @@ export function OptimizeContent({
 }
 
 function WasteRows({ data }: { data: MenubarPayload }) {
-  const findings = data.optimize.topFindings
+  return <FindingRows findings={data.optimize.topFindings} empty="No waste findings in this range yet." />
+}
 
-  if (!findings.length) return <EmptyNote>No waste findings in this range yet.</EmptyNote>
+type Finding = MenubarPayload['optimize']['topFindings'][number]
+
+const IMPACT_ICON: Record<Finding['impact'], string> = {
+  high: '↑',
+  medium: '→',
+  low: '↓',
+}
+
+function FindingRows({ findings, empty }: { findings: Finding[]; empty: string }) {
+  if (!findings.length) return <EmptyNote>{empty}</EmptyNote>
 
   return (
-    <>
+    <div className="opt-findings">
       {findings.map((finding, i) => (
-        <div className="li" style={{ alignItems: 'flex-start' }} key={`${finding.title}-${i}`}>
-          <span className="no">{String(i + 1).padStart(2, '0')}</span>
-          <div className="lx">
-            <b>{finding.title}</b>
-            <span>{finding.impact} impact</span>
-          </div>
-          <span className="val ok">{formatUsd(finding.savingsUSD)}</span>
+        <div className="opt-finding" key={`${finding.title}-${i}`}>
+          <span className="opt-finding-rank">{String(i + 1).padStart(2, '0')}</span>
+          <b className="opt-finding-title">{finding.title}</b>
+          <span className={`opt-impact opt-impact-${finding.impact}`}>
+            <span aria-hidden="true">{IMPACT_ICON[finding.impact]}</span>
+            {finding.impact.charAt(0).toUpperCase() + finding.impact.slice(1)}
+          </span>
+          <span className="opt-finding-savings">{formatUsd(finding.savingsUSD)}</span>
         </div>
       ))}
-    </>
+    </div>
   )
 }
 
@@ -135,17 +146,5 @@ function YieldRows({
 }
 
 function FixesRows({ data }: { data: MenubarPayload }) {
-  const count = data.optimize.findingCount
-  if (!count) return <EmptyNote>No fixes in this range yet.</EmptyNote>
-
-  return (
-    <div className="li" style={{ alignItems: 'flex-start' }}>
-      <span className="no">{String(count).padStart(2, '0')}</span>
-      <div className="lx">
-        <b>
-          {count.toLocaleString('en-US')} findings · {formatUsd(data.optimize.savingsUSD)} potential
-        </b>
-      </div>
-    </div>
-  )
+  return <FindingRows findings={data.optimize.topFindings} empty="No fixes in this range yet." />
 }

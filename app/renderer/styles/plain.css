@@ -499,9 +499,19 @@ body { overflow: hidden; background: var(--bg); color: var(--ink); }
 .ov-models tbody tr:first-child { border-top: 0; }
 .ov-model-bar-head, .ov-model-bar-cell { width: 52px; padding: 0 12px; text-align: left; }
 .ov-model-bar { display: block; height: 6px; min-width: 3px; border-radius: 3px; background: var(--accent); }
-.ov-models th:nth-child(2), .ov-models td:nth-child(2) { width: 100%; text-align: left; }
+.ov-models th:first-child, .ov-models td:first-child { width: 100%; text-align: left; }
 .ov-models .ov-model-name { overflow: hidden; color: var(--ink); font-weight: 550; text-overflow: ellipsis; }
 .ov-models td.mono { font-family: var(--mono); color: var(--ink); }
+.opt-findings { display: grid; }
+.opt-finding { display: grid; grid-template-columns: 28px minmax(0, 1fr) 104px 86px; align-items: center; column-gap: 12px; min-height: 43px; border-top: 1px solid var(--line2); }
+.opt-finding:first-child { border-top: 0; }
+.opt-finding-rank { color: var(--mut2); font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+.opt-finding-title { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
+.opt-impact { --impact: var(--mut2); display: inline-flex; width: fit-content; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 7px; background: color-mix(in srgb, var(--impact) 12%, transparent); color: var(--impact); font-size: 10px; font-weight: 650; line-height: 1; }
+.opt-impact-high { --impact: var(--bad); }
+.opt-impact-medium { --impact: var(--warn); }
+.opt-impact-low { --impact: var(--mut2); }
+.opt-finding-savings { color: var(--ok); font-family: var(--mono); font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .ov-analytics-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .ov-analytics-row > :only-child { grid-column: 1 / -1; }
 .ov-body-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }

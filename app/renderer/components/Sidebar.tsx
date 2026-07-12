@@ -17,7 +17,7 @@ export const NAV_ITEMS: Array<{ id: Section; label: string; key: string; icon: R
     <svg viewBox="0 0 24 24"><line x1="6" y1="20" x2="6" y2="13" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="18" y1="20" x2="18" y2="9" /></svg>
   ) },
   { id: 'optimize', label: 'Optimize', key: '⌘4', icon: (
-    <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
+    <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="3.4"/><path d="M10.5 3v1.7M10.5 16.3V18M3 10.5h1.7M16.3 10.5H18M5.3 5.3l1.2 1.2M14.5 14.5l1.2 1.2M15.7 5.3l-1.2 1.2M6.5 14.5l-1.2 1.2"/><line x1="15.5" y1="15.5" x2="20" y2="20"/></svg>
   ) },
   { id: 'models', label: 'Models', key: '⌘5', icon: (
     <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.3 7 12 12l8.7-5M12 22V12" /></svg>

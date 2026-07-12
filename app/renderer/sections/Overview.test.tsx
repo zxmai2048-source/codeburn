@@ -217,6 +217,7 @@ describe('Overview', () => {
     // Daily model breakdowns are summed over the selected period and sorted by
     // cost. Token values use the same compact B/M/K notation as the menubar.
     const modelsTable = screen.getByRole('table', { name: 'Models this period' })
+    expect(within(modelsTable).queryByRole('columnheader', { name: 'Relative cost' })).not.toBeInTheDocument()
     const modelRows = within(modelsTable).getAllByRole('row')
     expect(modelRows[1]).toHaveTextContent('claude-opus-4')
     expect(modelRows[1]).toHaveTextContent('1.2B')
