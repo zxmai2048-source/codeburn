@@ -1,9 +1,11 @@
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
+import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { JsonPlanSummary, Period, PlanId, PlanProvider, StatusJson } from '../lib/types'
+import type { SettingsPane } from './Settings'
 
 const PROVIDER_ORDER: PlanProvider[] = ['all', 'claude', 'codex', 'cursor', 'grok']
 const MS_PER_DAY = 24 * 60 * 60 * 1000
@@ -76,7 +78,7 @@ function planSummaries(status: StatusJson): JsonPlanSummary[] {
   return status.plan ? [status.plan] : []
 }
 
-export function Plans({ period, refreshToken = 0 }: { period: Period; refreshToken?: number }) {
+export function Plans({ period, refreshToken = 0, onNavigate }: { period: Period; refreshToken?: number; onNavigate?: (section: Section, pane?: SettingsPane) => void }) {
   const report = usePolled<StatusJson>(() => codeburn.getPlans(period), [period, refreshToken])
   const plans = report.data ? planSummaries(report.data) : []
   const cycle = cycleLabels(plans[0])
@@ -87,10 +89,10 @@ export function Plans({ period, refreshToken = 0 }: { period: Period; refreshTok
         <div className="t">Plans</div>
         {cycle ? <span className="scope">{cycle.caption}</span> : <span className="scope">Cycle unavailable</span>}
         <div className="sp" />
-        <div className="pop">{cycle ? cycle.pop : 'Cycle unavailable'}</div>
-        <span className="btn btn-s" aria-disabled="true">
+        <span className="scope">{cycle ? cycle.pop : 'Cycle unavailable'}</span>
+        <button type="button" className="btn btn-s" onClick={() => onNavigate?.('settings', 'plans')}>
           Add plan…
-        </span>
+        </button>
       </div>
       <div className="body">{renderBody(report.data, report.error, plans)}</div>
     </>

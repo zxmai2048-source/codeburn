@@ -15,7 +15,7 @@ import { Models } from './sections/Models'
 import { Sessions } from './sections/Sessions'
 import { Compare } from './sections/Compare'
 import { Plans } from './sections/Plans'
-import { Settings } from './sections/Settings'
+import { Settings, type SettingsPane } from './sections/Settings'
 import { SpendContent } from './sections/Spend'
 import type { DateRange, MenubarPayload, Period } from './lib/types'
 
@@ -65,6 +65,7 @@ function refreshedLabel(lastSuccessAt: number | null, loading: boolean, now: num
 
 export function App() {
   const [section, setSection] = useState<Section>('overview')
+  const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
   const [period, setPeriod] = useState<Period>('30days')
   const [provider, setProvider] = useState<string>('all')
   const [detectedProviders, setDetectedProviders] = useState<string[]>([])
@@ -107,18 +108,23 @@ export function App() {
     setRefreshToken(token => token + 1)
   }, [refreshOverview])
 
+  const navigate = useCallback((next: Section, pane: SettingsPane = 'general') => {
+    setSettingsPane(pane)
+    setSection(next)
+  }, [])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
       const key = event.key.toLowerCase()
-      if (key === '1') setSection('overview')
-      else if (key === '2') setSection('sessions')
-      else if (key === '3') setSection('spend')
-      else if (key === '4') setSection('optimize')
-      else if (key === '5') setSection('models')
-      else if (key === '6') setSection('compare')
-      else if (key === '7') setSection('plans')
-      else if (key === ',') setSection('settings')
+      if (key === '1') navigate('overview')
+      else if (key === '2') navigate('sessions')
+      else if (key === '3') navigate('spend')
+      else if (key === '4') navigate('optimize')
+      else if (key === '5') navigate('models')
+      else if (key === '6') navigate('compare')
+      else if (key === '7') navigate('plans')
+      else if (key === ',') navigate('settings')
       else if (key === 'r') refreshVisible()
       else return
       event.preventDefault()
@@ -126,7 +132,7 @@ export function App() {
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [refreshVisible])
+  }, [refreshVisible, navigate])
 
   const onPeriodChange = (value: string) => {
     if (isPeriod(value)) {
@@ -144,13 +150,13 @@ export function App() {
 
   return (
     <Window>
-      <Sidebar active={section} onNavigate={setSection} status={<StatusLine polled={overview} />} />
+      <Sidebar active={section} onNavigate={navigate} status={<StatusLine polled={overview} />} />
       <div className="ct">
         <ErrorBoundary key={section}>
         {section === 'plans' ? (
-          <Plans period={period} refreshToken={refreshToken} />
+          <Plans period={period} refreshToken={refreshToken} onNavigate={navigate} />
         ) : section === 'settings' ? (
-          <Settings period={period} refreshToken={refreshToken} onNavigate={setSection} />
+          <Settings period={period} refreshToken={refreshToken} onNavigate={navigate} initialPane={settingsPane} />
         ) : (
           <>
             <TopBar
@@ -167,7 +173,7 @@ export function App() {
             />
             <div className="body">
               {section === 'overview' ? (
-                <OverviewContent period={period} overview={overview} onNavigate={setSection} />
+                <OverviewContent period={period} overview={overview} onNavigate={navigate} />
               ) : section === 'sessions' ? (
                 <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
               ) : section === 'spend' ? (
@@ -175,7 +181,7 @@ export function App() {
               ) : section === 'optimize' ? (
                 <OptimizeContent period={period} range={customRange} overview={overview} refreshToken={refreshToken} />
               ) : section === 'models' ? (
-                <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
+                <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} onNavigate={navigate} />
               ) : section === 'compare' ? (
                 <Compare period={period} provider={provider} refreshToken={refreshToken} />
               ) : (

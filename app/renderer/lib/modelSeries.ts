@@ -17,11 +17,11 @@ export const SERIES_LABELS: Record<SeriesKey, string> = {
 }
 
 const SERIES_CSS_VAR: Record<SeriesKey, string> = {
-  opus: 'var(--blue)',
-  sonnet: 'var(--purple)',
-  haiku: 'var(--lav)',
-  gpt: 'var(--cyan)',
-  other: 'var(--t3)',
+  opus: 'var(--s-opus)',
+  sonnet: 'var(--s-sonnet)',
+  haiku: 'var(--s-haiku)',
+  gpt: 'var(--s-gpt)',
+  other: 'var(--s-other)',
 }
 
 const SERIES_CLASS: Record<SeriesKey, string> = {
@@ -47,6 +47,10 @@ export function seriesColorForModel(model?: string): string {
 
 export function seriesClassForModel(model?: string): string {
   return SERIES_CLASS[seriesKeyForModel(model)]
+}
+
+export function seriesClassForKey(series: SeriesKey): string {
+  return SERIES_CLASS[series]
 }
 
 export function seriesHexForModel(model?: string): string {

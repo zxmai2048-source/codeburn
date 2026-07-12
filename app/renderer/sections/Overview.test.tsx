@@ -245,8 +245,11 @@ describe('Overview', () => {
     expect(container.querySelector('.ov-spark')).not.toBeInTheDocument()
 
     expect(screen.getByText('82%')).toBeInTheDocument()
-    expect(screen.getByText('$84.20')).toBeInTheDocument()
-    expect(screen.getByText('from 11 applied fixes')).toBeInTheDocument()
+    // Scope to the KPI card (kpis, declared above): month-to-date spend can
+    // equal the saved figure on some dates, so an unscoped getByText('$84.20')
+    // would match two cards.
+    expect(within(kpis).getByText('$84.20')).toBeInTheDocument()
+    expect(within(kpis).getByText('from 11 applied fixes')).toBeInTheDocument()
     const statsCard = screen.getByText('Month to date').closest('.ov-stats3')
     expect(statsCard).toHaveClass('ov-card')
     expect(statsCard?.querySelector(':scope > .ov-fuel')).toBeInTheDocument()
@@ -347,12 +350,12 @@ describe('Overview', () => {
     // (project|date|calls|cost) → claude-opus-4 → blue dot + model in sub-line.
     expect(await screen.findByText('Jul 8 · claude-opus-4 · 41 calls')).toBeInTheDocument()
     const firstDot = container.querySelectorAll('.li')[0].querySelector('.mdot')
-    expect(firstDot?.getAttribute('style')).toContain('var(--blue)')
+    expect(firstDot?.getAttribute('style')).toContain('var(--s-opus)')
 
     // pairing-svc has no matching project → neutral dot, model omitted from sub.
     expect(screen.getByText('Jul 7 · 33 calls')).toBeInTheDocument()
     const secondDot = container.querySelectorAll('.li')[1].querySelector('.mdot')
-    expect(secondDot?.getAttribute('style')).toContain('var(--t3)')
+    expect(secondDot?.getAttribute('style')).toContain('var(--s-other)')
   })
 
   it('disambiguates two same-project/same-day/same-calls sessions by cost', async () => {
@@ -406,8 +409,8 @@ describe('Overview', () => {
     expect(await screen.findByText('Jul 8 · claude-opus-4 · 20 calls')).toBeInTheDocument()
     expect(screen.getByText('Jul 8 · claude-haiku-4 · 20 calls')).toBeInTheDocument()
     const dots = container.querySelectorAll('.li .mdot')
-    expect(dots[0].getAttribute('style')).toContain('var(--blue)') // $10 → opus
-    expect(dots[1].getAttribute('style')).toContain('var(--lav)') // $2 → haiku
+    expect(dots[0].getAttribute('style')).toContain('var(--s-opus)') // $10 → opus
+    expect(dots[1].getAttribute('style')).toContain('var(--s-haiku)') // $2 → haiku
   })
 
   it('shows the first-run locate-CLI state when the binary is missing', async () => {

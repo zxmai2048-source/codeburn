@@ -4,6 +4,7 @@ import { CliErrorPanel } from '../components/CliErrorPanel'
 import { seriesColorForModel } from '../components/ListRow'
 import { Panel } from '../components/Panel'
 import { SegTabs } from '../components/SegTabs'
+import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
@@ -38,11 +39,13 @@ export function Models({
   provider,
   range = null,
   refreshToken = 0,
+  onNavigate,
 }: {
   period: Period
   provider: string
   range?: DateRange | null
   refreshToken?: number
+  onNavigate?: (section: Section) => void
 }) {
   const [lens, setLens] = useState<ModelsLens>('model')
   const byTask = lens === 'task'
@@ -64,9 +67,9 @@ export function Models({
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'flex-start' }}>
         <SegTabs options={LENSES} value={lens} onChange={value => setLens(value as ModelsLens)} />
-        <span className="btn btn-s" aria-disabled="true">
+        <button type="button" className="btn btn-s" onClick={() => onNavigate?.('compare')}>
           Compare…
-        </span>
+        </button>
       </div>
       <Panel bodyStyle={{ overflowX: 'auto' }}>
         {report.data.length ? (

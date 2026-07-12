@@ -141,7 +141,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.015em; margin: 0 0 6px
 .li .lx span.bad { color: var(--red); }
 .li .val { font-family: var(--mono); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .li .val.ok { color: var(--mint); }
-.li .chev { color: #333A50; }
+.li .chev { color: var(--mut2); }
 .mdot { width: 8px; height: 8px; border-radius: 2.5px; flex: 0 0 auto; }
 
 .hint { display: flex; gap: 14px; padding: 8px 18px; border-top: 1px solid var(--hair); font-size: 10.5px; color: var(--t3); }

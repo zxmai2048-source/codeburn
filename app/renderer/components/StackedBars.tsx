@@ -1,5 +1,5 @@
 import { formatUsd } from '../lib/format'
-import { SERIES_HEX, SERIES_LABELS, type SeriesKey, seriesClassForModel, seriesKeyForModel } from '../lib/modelSeries'
+import { SERIES_LABELS, type SeriesKey, seriesClassForKey, seriesClassForModel, seriesKeyForModel } from '../lib/modelSeries'
 import type { DailyHistoryEntry } from '../lib/types'
 
 export function StackedBars({ daily }: { daily: DailyHistoryEntry[] }) {
@@ -37,7 +37,7 @@ export function StackedBars({ daily }: { daily: DailyHistoryEntry[] }) {
       <div className="legend">
         {legendSeries.map(series => (
           <span key={series}>
-            <i style={{ background: SERIES_HEX[series] }} />
+            <i className={seriesClassForKey(series)} />
             {SERIES_LABELS[series]}
           </span>
         ))}

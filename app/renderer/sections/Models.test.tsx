@@ -124,8 +124,8 @@ describe('Models', () => {
     expect(screen.getByText('$35.10')).toHaveClass('pos')
 
     const dots = [...container.querySelectorAll('.mdot')]
-    expect(dots[0]).toHaveAttribute('style', expect.stringContaining('var(--blue)'))
-    expect(dots[1]).toHaveAttribute('style', expect.stringContaining('var(--cyan)'))
+    expect(dots[0]).toHaveAttribute('style', expect.stringContaining('var(--s-opus)'))
+    expect(dots[1]).toHaveAttribute('style', expect.stringContaining('var(--s-gpt)'))
   })
 
   it('renders codex rows with credits and real cost as priced', async () => {

@@ -1,5 +1,5 @@
 import { formatUsd } from '../lib/format'
-import { isOtherNode, seriesHexForModel } from '../lib/modelSeries'
+import { isOtherNode, seriesColorForModel } from '../lib/modelSeries'
 import type { SpendFlow, SpendFlowNode } from '../lib/types'
 
 type LayoutNode = SpendFlowNode & {
@@ -98,12 +98,12 @@ export function Sankey({ flow }: { flow: SpendFlow }) {
       ))}
 
       {models.map(node => (
-        <text key={node.id} x="118" y={round(node.y + node.h / 2 + 3)} textAnchor="end" fontSize="10" fill="#9BA3B7">
+        <text key={node.id} x="118" y={round(node.y + node.h / 2 + 3)} textAnchor="end" fontSize="10" fill="var(--t2)">
           {node.displayLabel} · {formatUsd(node.cost)}
         </text>
       ))}
       {projects.map(node => (
-        <text key={node.id} x="534" y={round(node.y + node.h / 2 + 3)} fontSize="10" fill="#9BA3B7">
+        <text key={node.id} x="534" y={round(node.y + node.h / 2 + 3)} fontSize="10" fill="var(--t2)">
           {node.displayLabel} · {formatUsd(node.cost)}
         </text>
       ))}
@@ -124,7 +124,7 @@ function layoutNodes(nodes: SpendFlowNode[], x: number, modelSide: boolean): Lay
   return nodes.map((node, i) => {
     const h = Math.max(2, inflated[i] * scale)
     const neutral = isOtherNode(node.id) || isOtherNode(node.label)
-    const fill = modelSide && !neutral ? seriesHexForModel(node.label || node.id) : neutral ? '#5F6780' : '#3A4258'
+    const fill = modelSide && !neutral ? seriesColorForModel(node.label || node.id) : neutral ? 'var(--s-other)' : 'var(--mut2)'
     const displayLabel = modelSide ? modelDisplayLabel(node.label || node.id) : projectDisplayLabel(node.label || node.id)
     const laidOut = { ...node, x, y, h, fill, displayLabel }
     y += h + GAP

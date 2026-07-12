@@ -9,7 +9,8 @@ import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { ActionResult, AliasRow, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
 
-type Pane = 'general' | 'providers' | 'aliases' | 'plans' | 'devices' | 'export' | 'privacy'
+export type SettingsPane = 'general' | 'providers' | 'aliases' | 'plans' | 'devices' | 'export' | 'privacy'
+type Pane = SettingsPane
 type Theme = 'system' | 'light' | 'dark'
 
 type PlanPreset = { id: Exclude<PlanId, 'custom' | 'none'>; label: string; provider: Exclude<PlanProvider, 'all' | 'codex'> }
@@ -55,8 +56,8 @@ function shortFingerprint(fingerprint: string): string {
   return `${parts[0]}:${parts[1]}:…:${parts[parts.length - 1]}`
 }
 
-export function Settings({ period, refreshToken = 0, onNavigate }: { period: Period; refreshToken?: number; onNavigate?: (section: Section) => void }) {
-  const [pane, setPane] = useState<Pane>('general')
+export function Settings({ period, refreshToken = 0, onNavigate, initialPane }: { period: Period; refreshToken?: number; onNavigate?: (section: Section) => void; initialPane?: SettingsPane }) {
+  const [pane, setPane] = useState<Pane>(initialPane ?? 'general')
 
   return (
     <>
@@ -271,7 +272,7 @@ function PrivacyClaim({ title, detail, icon }: { title: string; detail: string; 
 
 function ThisDevicePanel({ identity, shareStatus }: { identity: ReturnType<typeof usePolled<Identity>>; shareStatus: ReturnType<typeof usePolled<ShareStatus>> }) {
   const status = shareStatus.data ? <span className="set-status"><span className={shareStatus.data.sharing ? 'set-dot ok' : 'set-dot'} />{shareStatus.data.sharing ? 'Visible' : 'Not sharing'}</span> : null
-  return <Panel title="This device" right={status}>{identity.data ? <div className="li"><div className="lx"><b>{identity.data.name}</b><span>Local device name: {identity.data.name}</span><span>{identity.data.fingerprint}</span></div></div> : identity.error ? <SettingsErrorText error={identity.error} /> : <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>Reading this device identity…</p>}{shareStatus.error && <SettingsErrorText error={shareStatus.error} />}</Panel>
+  return <Panel title="This device" right={status}>{identity.data ? <div className="li"><div className="lx"><b>{identity.data.name}</b><span>Local device name: {identity.data.name}</span><span>{identity.data.fingerprint}</span></div></div> : identity.error ? <SettingsErrorText error={identity.error} /> : <p className="set-cap">Reading this device identity…</p>}{shareStatus.error && <SettingsErrorText error={shareStatus.error} />}</Panel>
 }
 
 function DiscoveredPanel({ scan }: { scan: ReturnType<typeof usePolled<DeviceScanResult>> }) {
@@ -294,6 +295,6 @@ function PairedPanel({ devices, period, onRefresh }: { devices: ReturnType<typeo
 }
 
 function SettingsErrorText({ error }: { error: CliError }) {
-  if (error.kind === 'not-found') { const display = cliErrorDisplay(error); return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{display.title}</p> }
+  if (error.kind === 'not-found') { const display = cliErrorDisplay(error); return <p className="set-cap">{display.title}</p> }
   return <CliErrorText error={error} />
 }
