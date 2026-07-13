@@ -388,6 +388,19 @@ Run `codeburn` for the dashboard, or use a subcommand below. Most commands also 
 | `codeburn export` | CSV covering today, 7 days, and 30 days |
 | `codeburn export -f json` | Export as JSON instead of CSV |
 
+**Sync (team telemetry)** _preview_
+
+| Command | What it does |
+|---------|--------------|
+| `codeburn sync setup <url>` | One-time setup: OIDC login via browser, stores token securely |
+| `codeburn sync push` | Push unsent usage to remote endpoint (default: last 7 days) |
+| `codeburn sync push --since 30d` | Push a larger window |
+| `codeburn sync status` | Show endpoint, auth state, last sync time |
+| `codeburn sync logout` | Revoke token and remove credentials |
+| `codeburn sync reset --confirm` | Clear sent-ledger (re-send all data on next push) |
+
+Sync sends token counts, costs, models, and projects — never prompts or code. This feature is in preview; the protocol may change between releases. See [docs/sync/](docs/sync/) for details.
+
 **Web & devices**
 
 | Command | What it does |
