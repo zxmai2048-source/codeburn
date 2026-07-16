@@ -75,6 +75,27 @@ type PriceOverrideOptions = {
   cacheCreation?: number
   remove?: string
   list?: boolean
+  format?: string
+}
+
+type PriceOverrideRow = {
+  model: string
+  inputPerM: number
+  outputPerM: number
+  cacheReadPerM?: number
+  cacheCreationPerM?: number
+}
+
+function toPriceOverrideRows(overrides: Map<string, PriceOverrideConfig>): PriceOverrideRow[] {
+  return [...overrides.entries()]
+    .map(([model, rates]) => ({
+      model,
+      inputPerM: rates.input,
+      outputPerM: rates.output,
+      ...(typeof rates.cacheRead === 'number' ? { cacheReadPerM: rates.cacheRead } : {}),
+      ...(typeof rates.cacheCreation === 'number' ? { cacheCreationPerM: rates.cacheCreation } : {}),
+    }))
+    .sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0)
 }
 
 function invalidUsdPerMillionRate(option: string, value: number | undefined): string | null {
@@ -1099,11 +1120,18 @@ program
   .option('--cache-creation <usd-per-1M>', 'Cache-creation token price in USD per 1,000,000 tokens', parseNumber)
   .option('--remove <model>', 'Remove a price override')
   .option('--list', 'List configured price overrides')
+  .option('--format <format>', 'Output format: text, json', 'text')
   .action(async (model?: string, opts?: PriceOverrideOptions) => {
+    const format = opts?.format ?? 'text'
+    assertFormat(format, ['text', 'json'], 'price-override')
     const config = await readConfig()
     const overrides = new Map<string, PriceOverrideConfig>(Object.entries(config.priceOverrides ?? {}))
 
     if (opts?.list || (!model && !opts?.remove)) {
+      if (format === 'json') {
+        console.log(JSON.stringify({ overrides: toPriceOverrideRows(overrides), configPath: getConfigFilePath() }, null, 2))
+        return
+      }
       const entries = [...overrides.entries()]
       if (entries.length === 0) {
         console.log('\n  No price overrides configured.')

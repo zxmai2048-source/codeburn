@@ -55,4 +55,29 @@ describe('settings CLI JSON list output', () => {
     expect(result.status).toBe(0)
     expect(JSON.parse(result.stdout)).toEqual(['/work/copilot-repo'])
   })
+
+  it('lists price overrides as rows sorted by model with a config path', async () => {
+    const home = await makeHome()
+
+    expect(runCli(['price-override', 'z-model', '--input', '0.5', '--output', '2', '--cache-read', '0.05'], home).status).toBe(0)
+    expect(runCli(['price-override', 'a-model', '--input', '0.27', '--output', '1.1', '--cache-creation', '0.42'], home).status).toBe(0)
+
+    const result = runCli(['price-override', '--list', '--format', 'json'], home)
+    expect(result.status).toBe(0)
+    const parsed = JSON.parse(result.stdout)
+    expect(parsed.overrides).toEqual([
+      { model: 'a-model', inputPerM: 0.27, outputPerM: 1.1, cacheCreationPerM: 0.42 },
+      { model: 'z-model', inputPerM: 0.5, outputPerM: 2, cacheReadPerM: 0.05 },
+    ])
+    expect(typeof parsed.configPath).toBe('string')
+    expect(parsed.configPath).toContain('config.json')
+  })
+
+  it('emits an empty override list as JSON when none are configured', async () => {
+    const home = await makeHome()
+
+    const result = runCli(['price-override', '--list', '--format', 'json'], home)
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout).overrides).toEqual([])
+  })
 })
