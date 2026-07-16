@@ -169,7 +169,9 @@ const METRICS: MetricDef[] = [
     formatFn: 'percent',
     higherIsBetter: true,
     compute: s => {
-      const total = s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens
+      // Cache-hit = reads over reads + fresh input (excludes cache writes), to
+      // match src/menubar-json.ts:cacheHitPercent and the rest of the app.
+      const total = s.inputTokens + s.cacheReadTokens
       return total > 0 ? (s.cacheReadTokens / total) * 100 : null
     },
   },
