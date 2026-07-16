@@ -563,15 +563,20 @@ export function OverviewContent({
   range = null,
   overview,
   onNavigate,
+  ready = true,
 }: {
   period: Period
   provider?: string
   range?: DateRange | null
   overview: Polled<MenubarPayload>
   onNavigate?: (section: 'optimize' | 'sessions') => void
+  ready?: boolean
 }) {
-  const actReport = usePolled<ActReportJson>(() => codeburn.getActReport(), [])
-  const yieldReport = usePolled<YieldJsonReport>(() => codeburn.getYield(period, provider), [period, provider])
+  // Gate secondary spawns on the app-level readiness (first overview resolved),
+  // so the cold hydration runs once (via overview) rather than 3 parses at once
+  // on boot. Defaults true so standalone renders/tests poll normally.
+  const actReport = usePolled<ActReportJson>(() => codeburn.getActReport(), [], { enabled: ready })
+  const yieldReport = usePolled<YieldJsonReport>(() => codeburn.getYield(period, provider), [period, provider], { enabled: ready })
   const { data, error } = overview
   const modelIndex = useMemo(() => data ? buildModelIndex(data) : new Map<string, string>(), [data])
 

@@ -17,8 +17,20 @@ export type Polled<T> = {
  * Generic CLI-backed data hook: fetches on mount + whenever `deps` change, then
  * re-polls every `intervalMs`. Errors are normalized to the CliError shape so
  * sections can branch on `error.kind`. Last-good data is retained on error.
+ *
+ * `enabled` (default true) gates fetching: while false the hook stays in its
+ * initial loading state and issues no CLI spawn. The app boot flow sets it false
+ * on every section poll until the first overview resolves, so the one-time cold
+ * cache hydration happens ONCE (via overview) instead of fanning out into a
+ * parallel full-history parse per section.
  */
-export function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[], intervalMs = 30_000): Polled<T> {
+export function usePolled<T>(
+  fetcher: () => Promise<T>,
+  deps: unknown[],
+  opts: { intervalMs?: number; enabled?: boolean } = {},
+): Polled<T> {
+  const intervalMs = opts.intervalMs ?? 30_000
+  const enabled = opts.enabled ?? true
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<CliError | null>(null)
   const [loading, setLoading] = useState(true)
@@ -30,6 +42,7 @@ export function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[], interva
   const epochRef = useRef(0)
 
   const load = useCallback(() => {
+    if (!enabled) return
     const epoch = ++epochRef.current
     setLoading(true)
     // Clear any prior error at the start of each attempt so a fresh poll never
@@ -50,9 +63,10 @@ export function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[], interva
         if (epochRef.current !== epoch) return
         setLoading(false)
       })
-    // deps are intentionally the caller-provided dependency list.
+    // deps are intentionally the caller-provided dependency list; `enabled`
+    // is prepended so flipping the gate re-creates load and fires immediately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
+  }, [enabled, ...deps])
 
   useEffect(() => {
     load()

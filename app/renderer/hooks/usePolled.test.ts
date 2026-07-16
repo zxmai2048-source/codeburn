@@ -37,6 +37,27 @@ describe('usePolled', () => {
     expect(result.current.data).toBe('B-fresh')
   })
 
+  it('does not fetch while disabled, then fires once enabled flips true', async () => {
+    const resolvers: Array<(v: string) => void> = []
+    const fetcher = vi.fn(() => new Promise<string>(resolve => { resolvers.push(resolve) }))
+
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => usePolled(fetcher, ['x'], { enabled }),
+      { initialProps: { enabled: false } },
+    )
+
+    // Gated: no spawn, still in the initial loading state (splash/skeleton stays).
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(result.current.loading).toBe(true)
+    expect(result.current.data).toBeNull()
+
+    // Gate opens (first overview resolved): the fetch fires exactly once.
+    rerender({ enabled: true })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await act(async () => { resolvers[0]!('ready') })
+    expect(result.current.data).toBe('ready')
+  })
+
   it('keeps last-good data and exposes the error when a background reload fails', async () => {
     const calls: Array<{ resolve: (v: string) => void; reject: (e: unknown) => void }> = []
     const fetcher = vi.fn(() => new Promise<string>((resolve, reject) => { calls.push({ resolve, reject }) }))

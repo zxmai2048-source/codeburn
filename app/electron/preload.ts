@@ -51,6 +51,12 @@ const bridge = {
   chooseDirectory: () => invoke('codeburn:chooseDirectory'),
   cliStatus: () => invoke('codeburn:cliStatus'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  // Cold-start scan progress (main → renderer). Returns an unsubscribe fn.
+  onProgress: (cb: (event: unknown) => void) => {
+    const listener = (_e: unknown, event: unknown) => cb(event)
+    ipcRenderer.on('codeburn:progress', listener)
+    return () => { ipcRenderer.removeListener('codeburn:progress', listener) }
+  },
   platform: process.platform,
 }
 

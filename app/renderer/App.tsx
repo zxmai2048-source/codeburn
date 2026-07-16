@@ -112,6 +112,13 @@ export function App() {
   )
   const refreshOverview = overview.refresh
 
+  // Boot readiness: the overview poll is the single cold-cache warmer (long
+  // timeout + progress). Other sections gate their first CLI spawn on this so a
+  // cold first run hydrates ONCE here instead of fanning out into a parallel
+  // full-history parse per section. Flips true the moment overview has data OR a
+  // (resolved) error; after that everything polls normally.
+  const ready = overview.data != null || overview.error != null
+
   useEffect(() => {
     let saved: string | null = null
     try { saved = globalThis.localStorage?.getItem('codeburn.theme') ?? null } catch { /* storage can be unavailable */ }
@@ -235,7 +242,7 @@ export function App() {
         <DailyBudgetBanner payload={overview.data ?? null} provider={provider} />
         <ErrorBoundary key={section}>
         {section === 'plans' ? (
-          <Plans period={period} refreshToken={refreshToken} onNavigate={navigate} />
+          <Plans period={period} refreshToken={refreshToken} onNavigate={navigate} ready={ready} />
         ) : section === 'settings' ? (
           <Settings period={period} refreshToken={refreshToken} onNavigate={navigate} initialPane={settingsPane} claudeConfigs={claudeConfigs} claudeConfigSource={claudeConfigSource} />
         ) : (
@@ -257,17 +264,17 @@ export function App() {
             />
             <div className={motionClass('body', 'section-fade')}>
               {section === 'overview' ? (
-                <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} />
+                <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} ready={ready} />
               ) : section === 'sessions' ? (
-                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={detectedProviders} onProviderChange={onProviderSelect} />
+                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={detectedProviders} onProviderChange={onProviderSelect} ready={ready} />
               ) : section === 'spend' ? (
-                <SpendContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} />
+                <SpendContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} ready={ready} />
               ) : section === 'optimize' ? (
-                <OptimizeContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} />
+                <OptimizeContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} ready={ready} />
               ) : section === 'models' ? (
-                <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} onNavigate={navigate} />
+                <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} onNavigate={navigate} ready={ready} />
               ) : section === 'compare' ? (
-                <Compare period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
+                <Compare period={period} provider={provider} range={customRange} refreshToken={refreshToken} ready={ready} />
               ) : (
                 <SectionPlaceholder title={SECTION_TITLES[section]} />
               )}

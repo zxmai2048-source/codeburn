@@ -217,7 +217,7 @@ export function resolveCodeburnPath(): string | null {
   return target.kind === 'bundled' ? target.entry : target.bin
 }
 
-function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number): Promise<unknown> {
+function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number, onStderr?: (chunk: string) => void): Promise<unknown> {
   return new Promise<unknown>((resolve, reject) => {
     const child = spawn(spec.bin, spec.args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: spec.env })
     activeChildren.add(child)
@@ -252,7 +252,13 @@ function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number): Promise<u
     }
 
     child.stdout.on('data', chunk => { stdout += chunk; bump(chunk.length) })
-    child.stderr.on('data', chunk => { stderr += chunk; bump(chunk.length) })
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+      bump(chunk.length)
+      // Live stderr for the cold-start warmup: forwards CLI scan-progress lines
+      // to the splash. Never fires for ordinary reads (onStderr unset).
+      if (onStderr) { try { onStderr(chunk.toString()) } catch { /* forwarder must not kill the read */ } }
+    })
 
     child.on('error', err => {
       finish(() => reject(new CliError('not-found', err.message)))
@@ -286,18 +292,24 @@ function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number): Promise<u
  * Read-only, so concurrent identical calls share one child and a 5s result cache
  * absorbs same-cadence pollers. Never use this for config-mutating commands.
  */
-export function spawnCli(args: string[], opts: { timeoutMs?: number } = {}): Promise<unknown> {
+export function spawnCli(
+  args: string[],
+  opts: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv } = {},
+): Promise<unknown> {
   const target = resolveTarget()
   if (!target) return Promise.reject(new CliError('not-found', 'codeburn CLI not found'))
   const spec = spawnSpecFor(target, args)
+  if (opts.extraEnv) spec.env = { ...spec.env, ...opts.extraEnv }
 
   const key = JSON.stringify([spec.bin, ...spec.args])
   const cached = readCache.get(key)
   if (cached && Date.now() - cached.at < COALESCE_TTL_MS) return Promise.resolve(cached.value)
   const existing = readInflight.get(key)
+  // A same-cadence re-poll during a slow cold warmup coalesces onto the one
+  // in-flight child (which already carries onStderr); no second cold parse.
   if (existing) return existing
 
-  const flight = runCli(spec, args[0] ?? '', opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const flight = runCli(spec, args[0] ?? '', opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts.onStderr)
     .then(value => { readCache.set(key, { at: Date.now(), value }); return value })
     .finally(() => { readInflight.delete(key) })
   readInflight.set(key, flight)

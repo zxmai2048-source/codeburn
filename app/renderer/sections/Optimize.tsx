@@ -27,20 +27,26 @@ export function OptimizeContent({
   range = null,
   overview,
   refreshToken = 0,
+  ready = true,
 }: {
   period: Period
   provider?: string
   range?: DateRange | null
   overview: Polled<MenubarPayload>
   refreshToken?: number
+  ready?: boolean
 }) {
+  // Gate on app-level readiness so boot hydrates the cache once (default true
+  // keeps standalone renders/tests polling normally).
   const optimizeReport = usePolled<OptimizeJsonReport>(
     () => range ? codeburn.getOptimizeReport(period, provider, range) : codeburn.getOptimizeReport(period, provider),
     [period, provider, range?.from, range?.to, refreshToken],
+    { enabled: ready },
   )
   const yieldReport = usePolled<YieldJsonReport>(
     () => range ? codeburn.getYield(period, provider, range) : codeburn.getYield(period, provider),
     [period, provider, range?.from, range?.to, refreshToken],
+    { enabled: ready },
   )
   const [tab, setTab] = useState<OptimizeTab>('waste')
 

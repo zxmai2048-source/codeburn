@@ -62,7 +62,7 @@ function manualPlanSummaries(status: StatusJson): JsonPlanSummary[] {
   return planSummaries(status).filter(plan => plan.provider !== 'claude' && plan.provider !== 'codex')
 }
 
-export function Plans({ period, refreshToken = 0, onNavigate }: { period: Period; refreshToken?: number; onNavigate?: (section: Section, pane?: SettingsPane) => void }) {
+export function Plans({ period, refreshToken = 0, onNavigate, ready = true }: { period: Period; refreshToken?: number; onNavigate?: (section: Section, pane?: SettingsPane) => void; ready?: boolean }) {
   // Force a fresh fetch (bypassing QuotaService's 2-min cache, and its keychain
   // guard) when the user hits ⌘R or clicks Refresh in the Connect affordance;
   // the steady 30s poll keeps serving cached quota.
@@ -75,7 +75,7 @@ export function Plans({ period, refreshToken = 0, onNavigate }: { period: Period
     return codeburn.getQuota(force)
   }, [refreshToken, reconnectNonce])
   const reconnect = () => setReconnectNonce(value => value + 1)
-  const budgetReport = usePolled<StatusJson>(() => codeburn.getPlans(period), [period, refreshToken])
+  const budgetReport = usePolled<StatusJson>(() => codeburn.getPlans(period), [period, refreshToken], { enabled: ready })
   const manualPlans = budgetReport.data ? manualPlanSummaries(budgetReport.data) : []
 
   return (

@@ -33,15 +33,18 @@ export function Compare({
   provider,
   range = null,
   refreshToken = 0,
+  ready = true,
 }: {
   period: Period
   provider: string
   range?: DateRange | null
   refreshToken?: number
+  ready?: boolean
 }) {
   const models = usePolled<ModelStats[]>(
     () => codeburn.getCompareModels(period, provider),
     [period, provider, refreshToken],
+    { enabled: ready },
   )
   const [modelA, setModelA] = useState<string | null>(null)
   const [modelB, setModelB] = useState<string | null>(null)

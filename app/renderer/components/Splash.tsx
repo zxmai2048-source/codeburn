@@ -2,14 +2,61 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { FlameMark } from './FlameMark'
+import { ProviderLogo } from './ProviderLogo'
 import { motionClass, motionEnabled, reducedMotion } from '../lib/motion'
+import { codeburn } from '../lib/ipc'
+import type { ScanProgressEvent } from '../lib/types'
 import { version } from '../../package.json'
 import loaderVideo from '../assets/splash-loader.webm'
 
 const MIN_ON_SCREEN_MS = 600
 const CROSSFADE_MS = 250
+// If the first scan is still running this long after boot, reveal the per-provider
+// indexing detail. Warm launches resolve well before this, so they never show it.
+const REVEAL_FALLBACK_MS = 3500
 
 type Phase = 'lit' | 'out' | 'done'
+type ProvStatus = 'pending' | 'active' | 'done'
+
+type Progress = {
+  /** Detected providers, in the order the CLI reports them. */
+  order: string[]
+  status: Record<string, ProvStatus>
+  claudeDone: number
+  claudeTotal: number
+  /** A tick with a nonzero total — the cache is genuinely cold and parsing. */
+  realWork: boolean
+  /** Any progress event at all has arrived (distinguishes a new CLI from old). */
+  seen: boolean
+}
+
+const EMPTY: Progress = { order: [], status: {}, claudeDone: 0, claudeTotal: 0, realWork: false, seen: false }
+
+function reduceProgress(state: Progress, event: ScanProgressEvent): Progress {
+  switch (event.kind) {
+    case 'providers': {
+      const status: Record<string, ProvStatus> = {}
+      for (const p of event.providers) status[p] = state.status[p] ?? 'pending'
+      return { ...state, order: event.providers, status, seen: true }
+    }
+    case 'provider': {
+      const order = state.order.includes(event.provider) ? state.order : [...state.order, event.provider]
+      const next: ProvStatus = event.state === 'done' ? 'done' : 'active'
+      return { ...state, order, status: { ...state.status, [event.provider]: next }, seen: true }
+    }
+    case 'tick':
+      return { ...state, claudeDone: event.done, claudeTotal: event.total, realWork: state.realWork || event.total > 0, seen: true }
+    case 'done': {
+      const status = { ...state.status }
+      for (const p of state.order) status[p] = 'done'
+      return { ...state, status }
+    }
+  }
+}
+
+function providerLabel(id: string): string {
+  return id.split(/[-\s]+/).filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+}
 
 /**
  * Full-window branded startup loader -- the same scanning moment as the menubar
@@ -20,11 +67,36 @@ type Phase = 'lit' | 'out' | 'done'
  * never trapped behind branding; reduced motion swaps instantly with no fade.
  * A `done` latch means later loading states -- polls, filter changes -- never
  * bring it back.
+ *
+ * On a genuinely cold first run the overview warmup streams per-provider scan
+ * progress (main.ts forwards the CLI's stderr). Once real parse work is detected
+ * (or the scan simply outlasts REVEAL_FALLBACK_MS), the splash reveals a "first
+ * run: indexing" line and a per-provider ingest list. A warm launch resolves
+ * before that threshold and never shows it.
  */
 export function Splash({ hasData, hasError }: { hasData: boolean; hasError: boolean }) {
   const [phase, setPhase] = useState<Phase>('lit')
+  const [progress, setProgress] = useState<Progress>(EMPTY)
+  const [reveal, setReveal] = useState(false)
   const shownAt = useRef(Date.now())
   const done = useRef(false)
+  const seenRef = useRef(false)
+
+  // Subscribe once to cold-start progress. `codeburn` is undefined outside the
+  // Electron preload (e.g. unit tests); guard so the splash still renders.
+  useEffect(() => {
+    if (!codeburn || typeof codeburn.onProgress !== 'function') return
+    return codeburn.onProgress(event => setProgress(prev => reduceProgress(prev, event)))
+  }, [])
+
+  useEffect(() => { seenRef.current = progress.seen }, [progress.seen])
+
+  // Real parse work reveals the detail at once; otherwise a slow-scan fallback.
+  useEffect(() => { if (progress.realWork) setReveal(true) }, [progress.realWork])
+  useEffect(() => {
+    const timer = setTimeout(() => { if (seenRef.current) setReveal(true) }, REVEAL_FALLBACK_MS)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     if (done.current) return
@@ -54,6 +126,7 @@ export function Splash({ hasData, hasError }: { hasData: boolean; hasError: bool
   if (phase === 'done' || typeof document === 'undefined') return null
 
   const base = phase === 'out' ? 'splash splash-out' : 'splash'
+  const showDetail = reveal && phase === 'lit'
   return createPortal(
     <div className={motionClass(base, 'splash-lit')} aria-hidden="true">
       {motionEnabled() ? (
@@ -67,6 +140,31 @@ export function Splash({ hasData, hasError }: { hasData: boolean; hasError: bool
       )}
       <div className="splash-word">CodeBurn</div>
       <div className="splash-version">v{version}</div>
+      {showDetail && (
+        <div className="splash-status">
+          <div className="splash-status-line">
+            First run: indexing your usage history. This one-time scan can take a few minutes; future launches are instant.
+          </div>
+          {progress.order.length > 0 && (
+            <ul className="splash-providers">
+              {progress.order.map(id => {
+                const status = progress.status[id] ?? 'pending'
+                const count = id === 'claude' && status === 'active' && progress.claudeTotal > 0
+                  ? ` ${progress.claudeDone.toLocaleString('en-US')}/${progress.claudeTotal.toLocaleString('en-US')}`
+                  : ''
+                const text = status === 'active' ? `Ingesting ${providerLabel(id)}…${count}` : providerLabel(id)
+                return (
+                  <li key={id} className={`splash-prov ${status}`}>
+                    <ProviderLogo provider={id} size={16} />
+                    <span className="splash-prov-name">{text}</span>
+                    {status === 'done' && <span className="splash-prov-check">✓</span>}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      )}
     </div>,
     document.body,
   )

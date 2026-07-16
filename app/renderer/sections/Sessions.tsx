@@ -66,6 +66,7 @@ export function Sessions({
   refreshToken = 0,
   detectedProviders = [],
   onProviderChange = () => {},
+  ready = true,
 }: {
   period: Period
   provider: string
@@ -73,6 +74,7 @@ export function Sessions({
   refreshToken?: number
   detectedProviders?: Array<{ id: string; label: string }>
   onProviderChange?: (value: string) => void
+  ready?: boolean
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -82,6 +84,7 @@ export function Sessions({
   const report = usePolled<SessionRow[]>(
     () => range ? codeburn.getSessions(period, provider, range) : codeburn.getSessions(period, provider),
     [period, provider, range?.from, range?.to, refreshToken],
+    { enabled: ready },
   )
   const rows = report.data ?? []
   const q = query.trim().toLowerCase()

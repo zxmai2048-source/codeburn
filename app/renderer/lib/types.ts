@@ -549,7 +549,16 @@ export type PriceRates = { input?: number; output?: number; cacheRead?: number; 
 
 // ————— IPC surface (preload contextBridge → window.codeburn) —————
 
+/** Cold-start scan progress streamed from the CLI warmup (src/parser.ts). */
+export type ScanProgressEvent =
+  | { kind: 'providers'; providers: string[] }
+  | { kind: 'provider'; provider: string; state: 'start' | 'done'; files?: number }
+  | { kind: 'tick'; provider: string; done: number; total: number }
+  | { kind: 'done' }
+
 export interface CodeburnBridge {
+  /** Subscribe to cold-start scan progress; returns an unsubscribe fn. */
+  onProgress(cb: (event: ScanProgressEvent) => void): () => void
   getQuota(force?: boolean): Promise<QuotaProvider[]>
   getOverview(period: Period, provider: string, range?: DateRange, configSource?: string | null): Promise<MenubarPayload>
   getPlans(period: Period): Promise<StatusJson>

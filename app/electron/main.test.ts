@@ -63,8 +63,8 @@ const CHANNELS = [
 ] as const
 
 const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = [
-  { channel: 'codeburn:getOverview', args: ['30days', 'claude'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--provider', 'claude'] },
-  { channel: 'codeburn:getOverview', args: ['30days', 'all'], argv: ['status', '--format', 'menubar-json', '--period', '30days'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'claude'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--no-timeline', '--provider', 'claude'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--no-timeline'] },
   { channel: 'codeburn:getPlans', args: ['week'], argv: ['status', '--format', 'json', '--period', 'week'] },
   { channel: 'codeburn:getActReport', args: [], argv: ['act', 'report', '--json'] },
   { channel: 'codeburn:getModels', args: ['week', 'claude', true], argv: ['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task'] },
@@ -77,9 +77,9 @@ const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = 
   { channel: 'codeburn:getYield', args: ['today', 'claude'], argv: ['yield', '--format', 'json', '--period', 'today', '--provider', 'claude'] },
   { channel: 'codeburn:getSpendFlow', args: ['month', 'openai'], argv: ['spend', '--format', 'flow-json', '--period', 'month', '--provider', 'openai'] },
   { channel: 'codeburn:getOptimizeReport', args: ['month', 'openai'], argv: ['optimize', '--format', 'json', '--period', 'month', '--provider', 'openai'] },
-  { channel: 'codeburn:getOverview', args: ['30days', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--from', '2026-07-01', '--to', '2026-07-11'] },
-  { channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, 'claude-config:91dda17e8cf35193'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--claude-config-source', 'claude-config:91dda17e8cf35193'] },
-  { channel: 'codeburn:getOverview', args: ['month', 'claude', { from: '2026-07-01', to: '2026-07-11' }, 'claude-desktop:980e1e488a654830'], argv: ['status', '--format', 'menubar-json', '--period', 'month', '--provider', 'claude', '--from', '2026-07-01', '--to', '2026-07-11', '--claude-config-source', 'claude-desktop:980e1e488a654830'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--no-timeline', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, 'claude-config:91dda17e8cf35193'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--no-timeline', '--claude-config-source', 'claude-config:91dda17e8cf35193'] },
+  { channel: 'codeburn:getOverview', args: ['month', 'claude', { from: '2026-07-01', to: '2026-07-11' }, 'claude-desktop:980e1e488a654830'], argv: ['status', '--format', 'menubar-json', '--period', 'month', '--no-timeline', '--provider', 'claude', '--from', '2026-07-01', '--to', '2026-07-11', '--claude-config-source', 'claude-desktop:980e1e488a654830'] },
   { channel: 'codeburn:getModels', args: ['week', 'claude', true, { from: '2026-07-01', to: '2026-07-11' }], argv: ['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task', '--from', '2026-07-01', '--to', '2026-07-11'] },
   { channel: 'codeburn:getYield', args: ['today', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['yield', '--format', 'json', '--period', 'today', '--from', '2026-07-01', '--to', '2026-07-11'] },
   { channel: 'codeburn:getSpendFlow', args: ['month', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['spend', '--format', 'flow-json', '--period', 'month', '--from', '2026-07-01', '--to', '2026-07-11'] },
@@ -154,7 +154,7 @@ describe('createBridgeHandlers (IPC wiring)', () => {
     const { spawnCli, spawnCliAction, calls } = fakeSpawn()
     const handlers = createBridgeHandlers(withQuota({ spawnCli, spawnCliAction, resolveCodeburnPath: () => '/bin/codeburn' }))
     const res = await handlers['codeburn:getOverview']!('30days', 'all')
-    expect(calls[0]).toEqual(['status', '--format', 'menubar-json', '--period', '30days'])
+    expect(calls[0]).toEqual(['status', '--format', 'menubar-json', '--period', '30days', '--no-timeline'])
     expect(res).toEqual({ ok: true, value: { current: { cost: 12.34 } } })
   })
 
@@ -266,5 +266,57 @@ describe('createApplicationMenuTemplate', () => {
     expect(roles).toContain('toggleDevTools')
     expect(roles).not.toContain('reload')
     expect(roles).not.toContain('forceReload')
+  })
+})
+
+describe('createBridgeHandlers (cold-start warmup)', () => {
+  const base = (extra: object) => ({ spawnCli: vi.fn(), spawnCliAction: vi.fn(), resolveCodeburnPath: () => '/bin/codeburn', getQuota: vi.fn(async () => []), ...extra })
+
+  it('gives the first overview a long timeout + progress env, then reverts once warmed', async () => {
+    const opts: Array<Record<string, unknown> | undefined> = []
+    const spawnCli = vi.fn(async (_args: string[], o?: Record<string, unknown>) => { opts.push(o); return { current: { cost: 1 } } })
+    const emitProgress = vi.fn()
+    const handlers = createBridgeHandlers(base({ spawnCli, emitProgress }))
+
+    await handlers['codeburn:getOverview']!('30days', 'all')
+    expect(opts[0]?.timeoutMs).toBe(10 * 60_000)
+    expect((opts[0]?.extraEnv as Record<string, string> | undefined)?.CODEBURN_PROGRESS).toBe('1')
+    expect(typeof opts[0]?.onStderr).toBe('function')
+    expect(emitProgress).toHaveBeenCalledWith({ kind: 'done' })
+
+    await handlers['codeburn:getOverview']!('30days', 'all')
+    expect(opts[1]?.timeoutMs).toBeUndefined()
+    expect(opts[1]?.extraEnv).toBeUndefined()
+  })
+
+  it('re-arms the long timeout when the first overview fails (cache is still cold)', async () => {
+    const opts: Array<{ timeoutMs?: number } | undefined> = []
+    let n = 0
+    const spawnCli = vi.fn(async (_args: string[], o?: { timeoutMs?: number }) => {
+      opts.push(o)
+      if (++n === 1) throw new CliError('timeout', 'timed out')
+      return { current: { cost: 1 } }
+    })
+    const handlers = createBridgeHandlers(base({ spawnCli, emitProgress: vi.fn() }))
+
+    expect(await handlers['codeburn:getOverview']!('30days', 'all')).toMatchObject({ ok: false })
+    expect(await handlers['codeburn:getOverview']!('30days', 'all')).toMatchObject({ ok: true })
+    expect(opts[0]?.timeoutMs).toBe(10 * 60_000)
+    expect(opts[1]?.timeoutMs).toBe(10 * 60_000)
+  })
+
+  it('parses CLI scan-progress stderr lines and forwards them to emitProgress', async () => {
+    const spawnCli = vi.fn(async (_args: string[], o?: { onStderr?: (chunk: string) => void }) => {
+      // A split line proves the reader buffers across chunks.
+      o?.onStderr?.('CODEBURN_PROGRESS {"kind":"providers","providers":["claude","codex"]}\nCODEBURN_PROG')
+      o?.onStderr?.('RESS {"kind":"tick","provider":"claude","done":5,"total":10}\nnoise line\n')
+      return { current: { cost: 1 } }
+    })
+    const emitProgress = vi.fn()
+    const handlers = createBridgeHandlers(base({ spawnCli, emitProgress }))
+    await handlers['codeburn:getOverview']!('30days', 'all')
+
+    expect(emitProgress).toHaveBeenCalledWith({ kind: 'providers', providers: ['claude', 'codex'] })
+    expect(emitProgress).toHaveBeenCalledWith({ kind: 'tick', provider: 'claude', done: 5, total: 10 })
   })
 })

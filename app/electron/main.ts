@@ -8,6 +8,41 @@ import { getQuota, sanitizeError } from './quota'
 // `kind` survives contextBridge serialization. preload.ts unwraps it.
 export type Envelope<T = unknown> = { ok: true; value: T } | { ok: false; error: { kind: string; message: string } }
 
+// The first overview fetch after boot hydrates a cold cache from scratch (a full
+// history parse). That can far exceed the 45s read timeout, and killing it means
+// the cache never persists, so every later poll restarts the scan — perpetual
+// slowness. Give the first (cold) overview a long window; revert to the default
+// once it succeeds. Sections gate their own first poll on this one resolving so
+// the cold hydration runs ONCE, not once per section in parallel.
+const WARMUP_TIMEOUT_MS = 10 * 60_000
+// Wire marker for CLI scan-progress lines (src/parser.ts: PROGRESS_LINE_PREFIX).
+const PROGRESS_LINE_PREFIX = 'CODEBURN_PROGRESS '
+// IPC channel carrying cold-start scan-progress events to the splash.
+export const PROGRESS_CHANNEL = 'codeburn:progress'
+
+/** Line-buffer a spawn's stderr and forward each parsed scan-progress event. */
+export function makeProgressReader(emit: (event: unknown) => void): (chunk: string) => void {
+  let buffer = ''
+  return chunk => {
+    buffer += chunk
+    let nl = buffer.indexOf('\n')
+    while (nl >= 0) {
+      const line = buffer.slice(0, nl)
+      buffer = buffer.slice(nl + 1)
+      if (line.startsWith(PROGRESS_LINE_PREFIX)) {
+        try { emit(JSON.parse(line.slice(PROGRESS_LINE_PREFIX.length))) } catch { /* ignore malformed line */ }
+      }
+      nl = buffer.indexOf('\n')
+    }
+  }
+}
+
+function broadcastProgress(event: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(PROGRESS_CHANNEL, event)
+  }
+}
+
 function providerArgs(provider: string | undefined): string[] {
   return provider && provider !== 'all' ? ['--provider', provider] : []
 }
@@ -86,10 +121,12 @@ function toEnvelopeError(err: unknown): { kind: string; message: string } {
 }
 
 type Deps = {
-  spawnCli: (args: string[], opts?: { timeoutMs?: number }) => Promise<unknown>
+  spawnCli: (args: string[], opts?: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv }) => Promise<unknown>
   spawnCliAction: (args: string[], opts?: { timeoutMs?: number }) => Promise<ActionResult>
   resolveCodeburnPath: () => string | null
   getQuota: typeof getQuota
+  /** Forward cold-start scan-progress events to the renderer splash. */
+  emitProgress?: (event: unknown) => void
 }
 
 type Handler = (...args: any[]) => Promise<Envelope>
@@ -99,10 +136,41 @@ type Handler = (...args: any[]) => Promise<Envelope>
  * shell) and returns a result envelope. Pure + injectable so the wiring is
  * unit-testable without launching Electron.
  */
-export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, resolveCodeburnPath, getQuota }): Record<string, Handler> {
+export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, resolveCodeburnPath, getQuota, emitProgress: broadcastProgress }): Record<string, Handler> {
+  const emitProgress = deps.emitProgress ?? (() => {})
+  // Flips true after the first overview fetch succeeds. Until then, every
+  // overview fetch runs cold (long timeout + progress streaming); the shared
+  // spawnCli coalescing means concurrent same-arg re-polls join one child.
+  let overviewWarmed = false
+
   const run = (build: (...args: any[]) => string[]): Handler => async (...args: any[]) => {
     try {
       return { ok: true, value: await deps.spawnCli(build(...args)) }
+    } catch (err) {
+      return { ok: false, error: toEnvelopeError(err) }
+    }
+  }
+
+  // The desktop never renders the granular timeline, so it always passes
+  // --no-timeline (skips buildGranularHistory on every poll). The Swift menubar
+  // omits the flag and keeps the timeline unchanged.
+  const buildOverviewArgs = (period: string, provider: string, range?: DateRange, configSource?: string | null): string[] => [
+    'status', '--format', 'menubar-json', '--period', vPeriod(period), '--no-timeline',
+    ...providerArgs(vProvider(provider)), ...rangeArgs(vRange(range)), ...configSourceArgs(vConfigSource(configSource)),
+  ]
+
+  const getOverview: Handler = async (period: string, provider: string, range?: DateRange, configSource?: string | null) => {
+    try {
+      const args = buildOverviewArgs(period, provider, range, configSource)
+      if (overviewWarmed) return { ok: true, value: await deps.spawnCli(args) }
+      const value = await deps.spawnCli(args, {
+        timeoutMs: WARMUP_TIMEOUT_MS,
+        extraEnv: { CODEBURN_PROGRESS: '1' },
+        onStderr: makeProgressReader(emitProgress),
+      })
+      overviewWarmed = true
+      emitProgress({ kind: 'done' })
+      return { ok: true, value }
     } catch (err) {
       return { ok: false, error: toEnvelopeError(err) }
     }
@@ -121,9 +189,7 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
       try { return { ok: true, value: await deps.getQuota({ force: Boolean(force) }) } }
       catch (error) { return { ok: false, error: { kind: 'nonzero', message: sanitizeError(error) } } }
     },
-    'codeburn:getOverview': run((period: string, provider: string, range?: DateRange, configSource?: string | null) => [
-      'status', '--format', 'menubar-json', '--period', vPeriod(period), ...providerArgs(vProvider(provider)), ...rangeArgs(vRange(range)), ...configSourceArgs(vConfigSource(configSource)),
-    ]),
+    'codeburn:getOverview': getOverview,
     'codeburn:getPlans': run((period: string) => ['status', '--format', 'json', '--period', vPeriod(period)]),
     'codeburn:getActReport': run(() => ['act', 'report', '--json']),
     'codeburn:getModels': run((period: string, provider: string, byTask: boolean, range?: DateRange) => [

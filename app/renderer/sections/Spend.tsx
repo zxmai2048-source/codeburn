@@ -47,16 +47,21 @@ export function SpendContent({
   range = null,
   overview,
   refreshToken = 0,
+  ready = true,
 }: {
   period: Period
   provider: string
   range?: DateRange | null
   overview: Polled<MenubarPayload>
   refreshToken?: number
+  ready?: boolean
 }) {
+  // Gate on app-level readiness so boot hydrates the cache once (default true
+  // keeps standalone renders/tests polling normally).
   const flow = usePolled<SpendFlow>(
     () => range ? codeburn.getSpendFlow(period, provider, range) : codeburn.getSpendFlow(period, provider),
     [period, provider, range?.from, range?.to, refreshToken],
+    { enabled: ready },
   )
 
   if (!overview.data) {

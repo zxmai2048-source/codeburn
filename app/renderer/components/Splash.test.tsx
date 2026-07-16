@@ -2,6 +2,14 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+// The splash captures `codeburn` at import; mock it so a test can drive the
+// progress callback the splash subscribes with.
+let progressCb: ((event: unknown) => void) | undefined
+vi.mock('../lib/ipc', () => ({
+  codeburn: { onProgress: (cb: (event: unknown) => void) => { progressCb = cb; return () => { progressCb = undefined } } },
+  normalizeCliError: (err: unknown) => err,
+}))
+
 import { Splash } from './Splash'
 import { mockMatchMedia as mockReducedMotion } from '../lib/testMatchMedia'
 
@@ -70,6 +78,32 @@ describe('Splash', () => {
     expect(splashEl()).not.toBeInTheDocument()
     rerender(<Splash hasData hasError={false} />)
     expect(splashEl()).not.toBeInTheDocument()
+  })
+
+  it('reveals the per-provider indexing list on real cold-scan progress', () => {
+    render(<Splash hasData={false} hasError={false} />)
+    expect(splashEl()).toBeInTheDocument()
+    // No detail before any progress arrives.
+    expect(document.querySelector('.splash-status')).toBeNull()
+
+    act(() => {
+      progressCb?.({ kind: 'providers', providers: ['claude', 'codex'] })
+      progressCb?.({ kind: 'provider', provider: 'claude', state: 'start' })
+      // A nonzero-total tick means the cache is genuinely cold: reveal at once.
+      progressCb?.({ kind: 'tick', provider: 'claude', done: 120, total: 480 })
+    })
+
+    const status = document.querySelector('.splash-status')
+    expect(status).toBeInTheDocument()
+    expect(status?.textContent).toContain('First run: indexing your usage history')
+    expect(status?.textContent).toContain('Ingesting Claude…')
+    expect(status?.textContent).toContain('120/480')
+    // Both detected providers render a row; claude is active, codex pending.
+    expect(document.querySelectorAll('.splash-prov').length).toBe(2)
+    expect(document.querySelector('.splash-prov.active')?.textContent).toContain('Claude')
+
+    act(() => { progressCb?.({ kind: 'provider', provider: 'claude', state: 'done' }) })
+    expect(document.querySelector('.splash-prov.done')?.textContent).toContain('Claude')
   })
 
   it('swaps instantly under reduced motion (no fade, no min-time)', () => {

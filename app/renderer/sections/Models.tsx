@@ -36,12 +36,14 @@ export function Models({
   range = null,
   refreshToken = 0,
   onNavigate,
+  ready = true,
 }: {
   period: Period
   provider: string
   range?: DateRange | null
   refreshToken?: number
   onNavigate?: (section: Section, pane?: SettingsPane) => void
+  ready?: boolean
 }) {
   const [lens, setLens] = useState<ModelsLens>('model')
   const onAddAlias = () => onNavigate?.('settings', 'aliases')
@@ -57,7 +59,7 @@ export function Models({
         )}
       </div>
       {lens === 'audit' ? (
-        <AuditLens period={period} provider={provider} range={range} refreshToken={refreshToken} />
+        <AuditLens period={period} provider={provider} range={range} refreshToken={refreshToken} ready={ready} />
       ) : (
         <ModelsUsage
           period={period}
@@ -66,6 +68,7 @@ export function Models({
           byTask={lens === 'task'}
           refreshToken={refreshToken}
           onAddAlias={onAddAlias}
+          ready={ready}
         />
       )}
     </>
@@ -79,6 +82,7 @@ function ModelsUsage({
   byTask,
   refreshToken,
   onAddAlias,
+  ready,
 }: {
   period: Period
   provider: string
@@ -86,10 +90,12 @@ function ModelsUsage({
   byTask: boolean
   refreshToken: number
   onAddAlias: () => void
+  ready: boolean
 }) {
   const report = usePolled<ModelReportRow[]>(
     () => range ? codeburn.getModels(period, provider, byTask, range) : codeburn.getModels(period, provider, byTask),
     [period, provider, byTask, range?.from, range?.to, refreshToken],
+    { enabled: ready },
   )
 
   if (!report.data) {
@@ -124,15 +130,18 @@ function AuditLens({
   provider,
   range,
   refreshToken,
+  ready,
 }: {
   period: Period
   provider: string
   range: DateRange | null
   refreshToken: number
+  ready: boolean
 }) {
   const report = usePolled<AuditRow[]>(
     () => range ? codeburn.getAudit(period, provider, range) : codeburn.getAudit(period, provider),
     [period, provider, range?.from, range?.to, refreshToken],
+    { enabled: ready },
   )
 
   if (!report.data) {
