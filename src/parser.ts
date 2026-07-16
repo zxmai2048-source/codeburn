@@ -1657,6 +1657,10 @@ async function scanProjectDirs(
   seenMsgIds: Set<string>,
   diskCache: SessionCache,
   dateRange?: DateRange,
+  // Cold-run robustness: called after every parsed Claude file so a throttled
+  // caller (parseAllSessions) can persist partial progress. A run killed
+  // mid-scan then resumes from a warm cache instead of re-parsing from zero.
+  onFileParsed?: () => Promise<void>,
 ): Promise<ProjectSummary[]> {
   const section = getOrCreateProviderSection(diskCache, 'claude')
   const allDiscoveredFiles = new Set<string>()
@@ -1696,7 +1700,9 @@ async function scanProjectDirs(
   }
 
   const parseProgress = createScanProgress('parsing changed claude sessions', changedFiles.length)
+  const progressTotal = changedFiles.length
   let filesDone = 0
+  emitScanProgress({ kind: 'tick', provider: 'claude', done: 0, total: progressTotal })
   for (const { filePath, info } of changedFiles) {
     delete section.files[filePath]
 
@@ -1730,6 +1736,12 @@ async function scanProjectDirs(
     }
     filesDone++
     await parseProgress.tick(filesDone)
+    // Machine-readable tick for the app splash (throttled to ~every 50 files so
+    // a large cold run doesn't flood stderr), plus a partial-progress save.
+    if (filesDone % 50 === 0 || filesDone === progressTotal) {
+      emitScanProgress({ kind: 'tick', provider: 'claude', done: filesDone, total: progressTotal })
+    }
+    if (onFileParsed) await onFileParsed()
   }
   parseProgress.finish()
 
@@ -2151,6 +2163,28 @@ let interactiveScanUI = false
 export function setInteractiveScanUI(active = true): void {
   interactiveScanUI = active
 }
+
+// Machine-readable scan progress for the desktop app's first-run splash. Plain
+// CLI/terminal usage is untouched: emission is gated on CODEBURN_PROGRESS=1,
+// which only the app's cold-start warmup spawn sets. Each event is one
+// newline-delimited JSON object behind a sentinel prefix so the reader can pick
+// it out of stderr that may also carry provider warnings. This is orthogonal to
+// createScanProgress's `\r` TTY line (that one never fires under a piped spawn).
+export const PROGRESS_LINE_PREFIX = 'CODEBURN_PROGRESS '
+export type ScanProgressEvent =
+  | { kind: 'providers'; providers: string[] }
+  | { kind: 'provider'; provider: string; state: 'start' | 'done'; files?: number }
+  | { kind: 'tick'; provider: string; done: number; total: number }
+
+export function emitScanProgress(event: ScanProgressEvent): void {
+  if (process.env['CODEBURN_PROGRESS'] !== '1') return
+  try { process.stderr.write(`${PROGRESS_LINE_PREFIX}${JSON.stringify(event)}\n`) } catch { /* stderr closed */ }
+}
+
+// Minimum spacing between partial-progress saves during a cold parse. Low enough
+// that an interrupted long run loses little work, high enough that repeated
+// full-cache writes never dominate a fast warm run.
+const PROGRESS_SAVE_THROTTLE_MS = 5000
 
 export function createScanProgress(label: string, total: number) {
   const show = !interactiveScanUI && total > 20 && process.stderr.isTTY === true
@@ -2611,15 +2645,6 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
   const claudeSources = allSources.filter(s => s.provider === 'claude')
   const nonClaudeSources = allSources.filter(s => s.provider !== 'claude')
 
-  const claudeDirs = claudeSources.map(s => ({
-    path: s.path,
-    name: s.project,
-    source: s.sourceId && s.sourceLabel && s.sourcePath && s.sourceKind
-      ? { id: s.sourceId, label: s.sourceLabel, path: s.sourcePath, kind: s.sourceKind }
-      : undefined,
-  }))
-  const claudeProjects = await scanProjectDirs(claudeDirs, seenMsgIds, diskCache, dateRange)
-
   const providerGroups = new Map<string, SessionSource[]>()
   for (const source of nonClaudeSources) {
     const existing = providerGroups.get(source.provider) ?? []
@@ -2627,10 +2652,41 @@ export async function parseAllSessions(dateRange?: DateRange, providerFilter?: s
     providerGroups.set(source.provider, existing)
   }
 
+  // Cold-run robustness: persist partial progress during a long parse (throttled)
+  // so a run interrupted before the single end-of-parse save still leaves a warm
+  // cache behind. saveCache is atomic (temp + rename) and clears `_dirty`, so this
+  // never races the final save below.
+  let lastSaveAt = Date.now()
+  const saveProgress = async (): Promise<void> => {
+    if (!(diskCache as { _dirty?: boolean })._dirty) return
+    if (Date.now() - lastSaveAt < PROGRESS_SAVE_THROTTLE_MS) return
+    lastSaveAt = Date.now()
+    try { await saveCache(diskCache) } catch { /* best-effort partial save */ }
+  }
+
+  emitScanProgress({ kind: 'providers', providers: [
+    ...(claudeSources.length > 0 ? ['claude'] : []),
+    ...providerGroups.keys(),
+  ] })
+
+  const claudeDirs = claudeSources.map(s => ({
+    path: s.path,
+    name: s.project,
+    source: s.sourceId && s.sourceLabel && s.sourcePath && s.sourceKind
+      ? { id: s.sourceId, label: s.sourceLabel, path: s.sourcePath, kind: s.sourceKind }
+      : undefined,
+  }))
+  if (claudeSources.length > 0) emitScanProgress({ kind: 'provider', provider: 'claude', state: 'start' })
+  const claudeProjects = await scanProjectDirs(claudeDirs, seenMsgIds, diskCache, dateRange, saveProgress)
+  if (claudeSources.length > 0) emitScanProgress({ kind: 'provider', provider: 'claude', state: 'done', files: claudeSources.length })
+
   const otherProjects: ProjectSummary[] = []
   for (const [providerName, sources] of providerGroups) {
+    emitScanProgress({ kind: 'provider', provider: providerName, state: 'start' })
     const projects = await parseProviderSources(providerName, sources, seenKeys, diskCache, dateRange)
+    emitScanProgress({ kind: 'provider', provider: providerName, state: 'done', files: sources.length })
     otherProjects.push(...projects)
+    await saveProgress()
   }
 
   // Durable providers with cached data but NO discovered sources (all files pruned

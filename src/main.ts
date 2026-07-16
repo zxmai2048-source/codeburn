@@ -776,6 +776,7 @@ program
   .option('--to <date>', 'End date (YYYY-MM-DD) for custom range')
   .option('--days <dates>', 'Comma-separated dates (YYYY-MM-DD) for multi-day selection')
   .option('--no-optimize', 'Skip optimize findings (menubar-json only, faster)')
+  .option('--no-timeline', 'Skip the granular timeline (menubar-json only, faster)')
   .addOption(new Option('--claude-config-source <id>').hideHelp())
   .action(async (opts) => {
     assertFormat(opts.format, ['terminal', 'menubar-json', 'json'], 'status')
@@ -826,6 +827,7 @@ program
         exclude: opts.exclude,
         daysSelection,
         optimize: opts.optimize !== false,
+        timeline: opts.timeline !== false,
         claudeConfigSourceId: opts.claudeConfigSource,
       })
       if (opts.scope === 'combined') {

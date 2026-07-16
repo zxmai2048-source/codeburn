@@ -108,6 +108,32 @@ describe('codeburn status --format menubar-json', () => {
     }
   })
 
+  it('omits history.timeline with --no-timeline, includes it by default', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-tl-'))
+    try {
+      const projectDir = join(home, '.claude', 'projects', 'myapp')
+      await mkdir(projectDir, { recursive: true })
+      const base = new Date(Date.now() - 3600_000)
+      const ts = (offset: number) => new Date(base.getTime() + offset).toISOString().replace(/\.\d+Z$/, 'Z')
+      await writeFile(
+        join(projectDir, 'session.jsonl'),
+        [userLine('s1', ts(0)), assistantLine('s1', ts(60_000), 'msg-1')].join('\n'),
+      )
+
+      const withTimeline = runCli(['status', '--format', 'menubar-json', '--period', 'today', '--no-optimize'], home)
+      expect(withTimeline.status, `stderr: ${withTimeline.stderr}`).toBe(0)
+      const withHistory = (JSON.parse(withTimeline.stdout) as { history: Record<string, unknown> }).history
+      expect(withHistory).toHaveProperty('timeline')
+
+      const noTimeline = runCli(['status', '--format', 'menubar-json', '--period', 'today', '--no-optimize', '--no-timeline'], home)
+      expect(noTimeline.status, `stderr: ${noTimeline.stderr}`).toBe(0)
+      const noHistory = (JSON.parse(noTimeline.stdout) as { history: Record<string, unknown> }).history
+      expect(noHistory).not.toHaveProperty('timeline')
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
   it('filters menubar payloads to a selected review day with --day', async () => {
     const home = await mkdtemp(join(tmpdir(), 'codeburn-menubar-day-'))
 

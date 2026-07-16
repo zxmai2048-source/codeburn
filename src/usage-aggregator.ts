@@ -96,6 +96,10 @@ export type AggregateOpts = {
   daysSelection?: { range: DateRange; label: string; days: Set<string> } | null
   optimize?: boolean
   claudeConfigSourceId?: string | null
+  /// Build the granular per-bucket timeline (`history.timeline`). Defaults to
+  /// true. The desktop app never renders it, so it passes `--no-timeline` to
+  /// skip the buildGranularHistory pass on every menubar poll.
+  timeline?: boolean
 }
 
 type ConfigOption = { id: string; label: string; path: string }
@@ -525,6 +529,6 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
 
   const optimize = opts.optimize === false ? null : await scanAndDetect(scanProjects, scanRange)
   const granularRange = opts.daysSelection?.range ?? scanRange
-  const granularHistory = buildGranularHistory(scanProjects, granularRange)
+  const granularHistory = opts.timeline === false ? undefined : buildGranularHistory(scanProjects, granularRange)
   return buildMenubarPayload(currentData, providers, optimize, dailyHistory, retryTax, routingWaste, breakdowns, claudeConfigs, granularHistory)
 }
