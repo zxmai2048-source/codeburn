@@ -203,7 +203,7 @@ codeburn yield                  # last 7 days (default)
 codeburn yield -p today         # today only
 codeburn yield -p 30days        # last 30 days
 codeburn yield -p month         # this calendar month
-codeburn yield --format json    # productive/reverted/abandoned spend as JSON
+codeburn yield --format json    # productive/reverted/abandoned/ambiguous spend as JSON
 ```
 
 Did the spend actually ship? `codeburn yield` correlates AI sessions with git commits by timestamp:
@@ -213,6 +213,9 @@ Did the spend actually ship? `codeburn yield` correlates AI sessions with git co
 | Productive | Commits from this session landed in main |
 | Reverted | Commits were later reverted |
 | Abandoned | No commits near session, or commits never merged |
+| Ambiguous | Session ran parallel to another and its window's commits were attributed to the tighter one |
+
+Attribution is timestamp-window based (heuristic): each commit is credited to at most one session — the tightest window containing it. The JSON report carries `methodology: "timestamp-window"`.
 
 Requires a git repository. Run from your project directory.
 
@@ -591,7 +594,7 @@ codeburn report --format json | jq '.projects'
 codeburn today --format json | jq '.overview.cost'
 ```
 
-For lighter output, use `status --format json` (today and month totals only), `optimize --format json` (setup health, findings, and copy-paste fixes), `yield --format json` (productive/reverted/abandoned spend), or file exports (`export -f json`).
+For lighter output, use `status --format json` (today and month totals only), `optimize --format json` (setup health, findings, and copy-paste fixes), `yield --format json` (productive/reverted/abandoned/ambiguous spend), or file exports (`export -f json`).
 
 </details>
 
