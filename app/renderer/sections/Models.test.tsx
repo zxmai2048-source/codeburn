@@ -2,15 +2,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ModelReportRow } from '../lib/types'
+import type { AuditRow, ModelReportRow } from '../lib/types'
 import { Models } from './Models'
 
-const { getModels } = vi.hoisted(() => ({
+const { getModels, getAudit } = vi.hoisted(() => ({
   getModels: vi.fn<(period: string, provider: string, byTask: boolean) => Promise<ModelReportRow[]>>(),
+  getAudit: vi.fn<(period: string, provider: string) => Promise<AuditRow[]>>(),
 }))
 vi.mock('../lib/ipc', async orig => {
   const actual = await orig<typeof import('../lib/ipc')>()
-  return { ...actual, codeburn: { getModels } }
+  return { ...actual, codeburn: { getModels, getAudit } }
 })
 
 const rows: ModelReportRow[] = [
@@ -113,9 +114,37 @@ const byTaskRows: ModelReportRow[] = [
   },
 ]
 
+const auditRows: AuditRow[] = [
+  {
+    provider: 'anthropic',
+    providerDisplayName: 'Anthropic',
+    model: 'claude-opus-4.8',
+    modelDisplayName: 'Claude Opus 4.8',
+    calls: 1200,
+    raw: { inputTokens: 50_000_000, outputTokens: 3_100_000, reasoningTokens: 900_000, cacheCreationInputTokens: 8_000_000, cacheReadInputTokens: 40_000_000, cachedInputTokens: 0, webSearchRequests: 0 },
+    displayed: { inputTokens: 50_000_000, outputTokens: 4_000_000, cacheWriteTokens: 8_000_000, cacheReadTokens: 40_000_000 },
+    rates: { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015, cacheWriteCostPerToken: 0.00000375, cacheReadCostPerToken: 0.0000003, webSearchCostPerRequest: 0.01, fastMultiplier: 1 },
+    cost: { input: 150, output: 60, cacheWrite: 30, cacheRead: 12, webSearch: 0, recomputedTotalUSD: 252 },
+    attributedCostUSD: 252,
+  },
+  {
+    provider: 'custom',
+    providerDisplayName: 'Custom',
+    model: 'my-proxy-model',
+    modelDisplayName: 'my-proxy-model',
+    calls: 90,
+    raw: { inputTokens: 4_800_000, outputTokens: 400_000, reasoningTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, cachedInputTokens: 0, webSearchRequests: 0 },
+    displayed: { inputTokens: 4_800_000, outputTokens: 400_000, cacheWriteTokens: 0, cacheReadTokens: 0 },
+    rates: null,
+    cost: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, webSearch: 0, recomputedTotalUSD: 0 },
+    attributedCostUSD: 0,
+  },
+]
+
 describe('Models', () => {
   beforeEach(() => {
     getModels.mockReset()
+    getAudit.mockReset()
   })
 
   it('renders priced model rows with series dots, costs, and savings', async () => {
@@ -194,5 +223,37 @@ describe('Models', () => {
     expect(screen.getAllByText('Claude Opus 4.8')).toHaveLength(1)
     expect(document.querySelectorAll('.model-task-group')).toHaveLength(1)
     expect(document.querySelectorAll('.model-task-row')).toHaveLength(2)
+  })
+
+  it('renders the audit lens with raw vs normalized token columns and an estimated flag', async () => {
+    getModels.mockResolvedValue(rows)
+    getAudit.mockResolvedValue(auditRows)
+
+    render(<Models period="30days" provider="all" />)
+
+    expect(await screen.findByText('Claude Opus 4.8')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Audit' }))
+
+    expect(await screen.findByText('my-proxy-model')).toBeInTheDocument()
+    expect(getAudit).toHaveBeenCalledWith('30days', 'all')
+    // Raw output (3.1M) and normalized output (4M = output + reasoning) both show.
+    expect(screen.getByText('3.1M')).toBeInTheDocument()
+    expect(screen.getByText('900K')).toBeInTheDocument()
+    expect(screen.getByText('4M')).toBeInTheDocument()
+    expect(screen.getByText('$252.00')).toBeInTheDocument()
+    // Only the unpriced row (rates: null) is flagged estimated.
+    expect(screen.getAllByText('est')).toHaveLength(1)
+  })
+
+  it('shows the audit empty state when there is nothing to audit', async () => {
+    getModels.mockResolvedValue(rows)
+    getAudit.mockResolvedValue([])
+
+    render(<Models period="week" provider="all" />)
+
+    expect(await screen.findByText('Claude Opus 4.8')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Audit' }))
+
+    expect(await screen.findByText('No model usage to audit in this range yet.')).toBeInTheDocument()
   })
 })

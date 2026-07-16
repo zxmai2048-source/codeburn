@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ActionResult, AliasRow, CombinedUsage, DeviceScanResult, Identity, MenubarPayload, ShareStatus, StatusJson } from '../lib/types'
+import type { ActionResult, AliasRow, CombinedUsage, DeviceScanResult, Identity, MenubarPayload, PriceOverrideList, PriceRates, ShareStatus, StatusJson } from '../lib/types'
 import { Settings } from './Settings'
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   getPlans: vi.fn<(period: string) => Promise<StatusJson>>(),
   getOverview: vi.fn<(period: string, provider: string) => Promise<MenubarPayload>>(),
   getAliases: vi.fn<() => Promise<AliasRow[]>>(),
+  getPriceOverrides: vi.fn<() => Promise<PriceOverrideList>>(),
+  setPriceOverride: vi.fn<(model: string, rates: PriceRates) => Promise<ActionResult>>(),
+  removePriceOverride: vi.fn<(model: string) => Promise<ActionResult>>(),
   setCurrency: vi.fn<(code: string) => Promise<ActionResult>>(),
   resetCurrency: vi.fn<() => Promise<ActionResult>>(),
   addAlias: vi.fn<(from: string, to: string) => Promise<ActionResult>>(),
@@ -57,6 +60,9 @@ describe('Settings', () => {
     mocks.getPlans.mockResolvedValue({ currency: 'EUR', today: { cost: 0, savings: 0, calls: 0 }, month: { cost: 0, savings: 0, calls: 0 }, plans: { claude: { id: 'claude-max', provider: 'claude', budget: 200, spent: 48, percentUsed: 24, status: 'under', projectedMonthEnd: 120, daysUntilReset: 19, periodStart: '2026-07-01', periodEnd: '2026-08-01' } } })
     mocks.getOverview.mockResolvedValue(overview)
     mocks.getAliases.mockResolvedValue([{ from: 'proxy-opus', to: 'claude-opus-4-6' }])
+    mocks.getPriceOverrides.mockResolvedValue({ overrides: [{ model: 'local/llama', inputPerM: 0.2, outputPerM: 0.6, cacheReadPerM: 0.05 }], configPath: '/home/user/.config/codeburn/config.json' })
+    mocks.setPriceOverride.mockResolvedValue(actionOk)
+    mocks.removePriceOverride.mockResolvedValue(actionOk)
     mocks.setCurrency.mockResolvedValue(actionOk)
     mocks.resetCurrency.mockResolvedValue(actionOk)
     mocks.addAlias.mockResolvedValue(actionOk)
@@ -155,6 +161,35 @@ describe('Settings', () => {
     expect(mocks.addAlias).toHaveBeenCalledWith('proxy-sonnet', 'claude-sonnet-4-5')
     await user.click(screen.getByRole('button', { name: 'Remove' }))
     expect(mocks.removeAlias).toHaveBeenCalledWith('proxy-opus')
+  })
+
+  it('lists, adds, and removes price overrides through the action bridge', async () => {
+    const user = userEvent.setup()
+    render(<Settings period="month" />)
+    await user.click(screen.getByRole('button', { name: 'Pricing' }))
+    expect(await screen.findByText('local/llama')).toBeInTheDocument()
+    expect(screen.getByText('in 0.2 · out 0.6 · read 0.05')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Override model'), 'ollama/qwen')
+    await user.type(screen.getByLabelText('Input rate'), '0.1')
+    await user.type(screen.getByLabelText('Output rate'), '0.4')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    // Only the two filled rates are sent; cache fields stay out of the payload.
+    expect(mocks.setPriceOverride).toHaveBeenCalledWith('ollama/qwen', { input: 0.1, output: 0.4 })
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+    expect(mocks.removePriceOverride).toHaveBeenCalledWith('local/llama')
+  })
+
+  it('rejects an invalid price rate client-side without calling the bridge', async () => {
+    const user = userEvent.setup()
+    render(<Settings period="month" />)
+    await user.click(screen.getByRole('button', { name: 'Pricing' }))
+    await user.type(screen.getByLabelText('Override model'), 'ollama/qwen')
+    await user.type(screen.getByLabelText('Input rate'), '0')
+    await user.type(screen.getByLabelText('Output rate'), '0.4')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText('Rates must be positive numbers (USD per 1M tokens).')).toBeInTheDocument()
+    expect(mocks.setPriceOverride).not.toHaveBeenCalled()
   })
 
   it('lists, removes, and adds plans through the action bridge', async () => {

@@ -61,6 +61,24 @@ function vOutPath(outPath: string): string {
   if (outPath.startsWith('-') || !path.isAbsolute(outPath)) throw new CliError('bad-args', 'export path must be absolute')
   return outPath
 }
+// Price-override rates are USD per 1M tokens: every provided rate must be a
+// finite, strictly positive number before it becomes a CLI value.
+type PriceRates = { input?: number; output?: number; cacheRead?: number; cacheCreation?: number }
+function rateArg(flag: string, value: number | undefined): string[] {
+  if (value === undefined) return []
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new CliError('bad-args', 'rate must be a positive number')
+  return [flag, String(value)]
+}
+function priceOverrideArgs(model: string, rates: PriceRates | undefined): string[] {
+  const r = rates ?? {}
+  return [
+    'price-override', vToken(model),
+    ...rateArg('--input', r.input),
+    ...rateArg('--output', r.output),
+    ...rateArg('--cache-read', r.cacheRead),
+    ...rateArg('--cache-creation', r.cacheCreation),
+  ]
+}
 
 function toEnvelopeError(err: unknown): { kind: string; message: string } {
   if (err instanceof CliError) return { kind: err.kind, message: sanitizeError(err.message) }
@@ -135,10 +153,16 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
     'codeburn:getIdentity': run(() => ['identity', '--format', 'json']),
     'codeburn:getAliases': run(() => ['model-alias', '--list', '--format', 'json']),
     'codeburn:getProxyPaths': run(() => ['proxy-path', '--list', '--format', 'json']),
+    'codeburn:getAudit': run((period: string, provider: string, range?: DateRange) => [
+      'audit', '--format', 'json', '--period', vPeriod(period), ...providerArgs(vProvider(provider)), ...rangeArgs(vRange(range)),
+    ]),
+    'codeburn:getPriceOverrides': run(() => ['price-override', '--list', '--format', 'json']),
     'codeburn:setCurrency': runAction((code: string) => ['currency', vCurrency(code)]),
     'codeburn:resetCurrency': runAction(() => ['currency', '--reset']),
     'codeburn:addAlias': runAction((from: string, to: string) => ['model-alias', vToken(from), vToken(to)]),
     'codeburn:removeAlias': runAction((from: string) => ['model-alias', '--remove', vToken(from)]),
+    'codeburn:setPriceOverride': runAction((model: string, rates: PriceRates) => priceOverrideArgs(model, rates)),
+    'codeburn:removePriceOverride': runAction((model: string) => ['price-override', '--remove', vToken(model)]),
     'codeburn:removeDevice': runAction((name: string) => ['devices', 'rm', vToken(name)]),
     'codeburn:setPlan': runAction((id: string, provider: string) => ['plan', 'set', vToken(id), '--provider', vProvider(provider)]),
     'codeburn:resetPlan': runAction((provider: string) => ['plan', 'reset', '--provider', vProvider(provider)]),

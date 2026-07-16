@@ -10,14 +10,15 @@ import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { DateRange, ModelReportRow, Period } from '../lib/types'
+import type { AuditRow, DateRange, ModelReportRow, Period } from '../lib/types'
 import type { SettingsPane } from './Settings'
 
-type ModelsLens = 'model' | 'task'
+type ModelsLens = 'model' | 'task' | 'audit'
 
 const LENSES = [
   { value: 'model', label: 'By model' },
   { value: 'task', label: 'By task' },
+  { value: 'audit', label: 'Audit' },
 ]
 
 function fmtInt(n: number): string {
@@ -39,7 +40,48 @@ export function Models({
 }) {
   const [lens, setLens] = useState<ModelsLens>('model')
   const onAddAlias = () => onNavigate?.('settings', 'aliases')
-  const byTask = lens === 'task'
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'flex-start' }}>
+        <SegTabs options={LENSES} value={lens} onChange={value => setLens(value as ModelsLens)} />
+        {lens !== 'audit' && (
+          <button type="button" className="btn btn-s" onClick={() => onNavigate?.('compare')}>
+            Compare…
+          </button>
+        )}
+      </div>
+      {lens === 'audit' ? (
+        <AuditLens period={period} provider={provider} range={range} refreshToken={refreshToken} />
+      ) : (
+        <ModelsUsage
+          period={period}
+          provider={provider}
+          range={range}
+          byTask={lens === 'task'}
+          refreshToken={refreshToken}
+          onAddAlias={onAddAlias}
+        />
+      )}
+    </>
+  )
+}
+
+function ModelsUsage({
+  period,
+  provider,
+  range,
+  byTask,
+  refreshToken,
+  onAddAlias,
+}: {
+  period: Period
+  provider: string
+  range: DateRange | null
+  byTask: boolean
+  refreshToken: number
+  onAddAlias: () => void
+}) {
   const report = usePolled<ModelReportRow[]>(
     () => range ? codeburn.getModels(period, provider, byTask, range) : codeburn.getModels(period, provider, byTask),
     [period, provider, byTask, range?.from, range?.to, refreshToken],
@@ -57,12 +99,6 @@ export function Models({
   return (
     <>
       {report.error && <StaleBanner error={report.error} />}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'flex-start' }}>
-        <SegTabs options={LENSES} value={lens} onChange={value => setLens(value as ModelsLens)} />
-        <button type="button" className="btn btn-s" onClick={() => onNavigate?.('compare')}>
-          Compare…
-        </button>
-      </div>
       <Panel bodyStyle={{ overflowX: 'auto' }}>
         {report.data.length ? (
           <ModelsTable rows={report.data} byTask={byTask} onAddAlias={onAddAlias} />
@@ -71,6 +107,101 @@ export function Models({
         )}
       </Panel>
     </>
+  )
+}
+
+// A row's cost is "estimated" when it has no live pricing entry, or when the
+// attributed cost diverges from a straight rate x displayed-token recompute
+// (fast-mode multipliers or the 1-hour cache rate that calculateCost applies).
+function auditEstimated(row: AuditRow): boolean {
+  if (!row.rates) return true
+  return Math.abs(row.cost.recomputedTotalUSD - row.attributedCostUSD) > 0.005
+}
+
+function AuditLens({
+  period,
+  provider,
+  range,
+  refreshToken,
+}: {
+  period: Period
+  provider: string
+  range: DateRange | null
+  refreshToken: number
+}) {
+  const report = usePolled<AuditRow[]>(
+    () => range ? codeburn.getAudit(period, provider, range) : codeburn.getAudit(period, provider),
+    [period, provider, range?.from, range?.to, refreshToken],
+  )
+
+  if (!report.data) {
+    if (report.error) return <CliErrorPanel error={report.error} subject="the token audit" />
+    return (
+      <Panel title="Audit">
+        <EmptyNote>Auditing token usage…</EmptyNote>
+      </Panel>
+    )
+  }
+
+  return (
+    <>
+      {report.error && <StaleBanner error={report.error} />}
+      <Panel bodyStyle={{ overflowX: 'auto' }}>
+        {report.data.length ? (
+          <AuditTable rows={report.data} />
+        ) : (
+          <EmptyNote>No model usage to audit in this range yet.</EmptyNote>
+        )}
+      </Panel>
+    </>
+  )
+}
+
+function AuditTable({ rows }: { rows: AuditRow[] }) {
+  return (
+    <table className="audit-table">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Calls</th>
+          <th>Input</th>
+          <th>Output</th>
+          <th>Reasoning</th>
+          <th>Norm out</th>
+          <th>Cache wr</th>
+          <th>Cache rd</th>
+          <th>Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <AuditTableRow key={`${row.provider}-${row.model}-${i}`} row={row} />
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function AuditTableRow({ row }: { row: AuditRow }) {
+  const estimated = auditEstimated(row)
+  return (
+    <tr>
+      <td title={row.model}>
+        <span className="mdot" style={{ display: 'inline-block', background: seriesColorForModel(row.modelDisplayName || row.model), marginRight: 8 }} />
+        {row.modelDisplayName}
+      </td>
+      <td>{fmtInt(row.calls)}</td>
+      <td>{formatCompact(row.raw.inputTokens)}</td>
+      <td>{formatCompact(row.raw.outputTokens)}</td>
+      <td>{formatCompact(row.raw.reasoningTokens)}</td>
+      <td>{formatCompact(row.displayed.outputTokens)}</td>
+      <td>{formatCompact(row.displayed.cacheWriteTokens)}</td>
+      <td>{formatCompact(row.displayed.cacheReadTokens)}</td>
+      <td>
+        {formatUsd(row.attributedCostUSD)}
+        {estimated ? <span className="est" title="Cost is estimated (no live pricing or derived rate)"> est</span> : null}
+      </td>
+    </tr>
   )
 }
 

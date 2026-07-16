@@ -10,9 +10,9 @@ import { usePolled } from '../hooks/usePolled'
 import { readDailyBudget } from '../lib/budget'
 import { formatConverted, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { ActionResult, AliasRow, ClaudeConfigSelector, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
+import type { ActionResult, AliasRow, ClaudeConfigSelector, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, PriceOverrideList, PriceOverrideRow, PriceRates, ShareStatus, StatusJson } from '../lib/types'
 
-export type SettingsPane = 'general' | 'providers' | 'aliases' | 'plans' | 'devices' | 'export' | 'privacy'
+export type SettingsPane = 'general' | 'providers' | 'aliases' | 'pricing' | 'plans' | 'devices' | 'export' | 'privacy'
 type Pane = SettingsPane
 type Theme = 'system' | 'light' | 'dark'
 
@@ -44,6 +44,7 @@ const RAIL_ITEMS: Array<{ id: Pane; label: string; icon: React.ReactNode }> = [
   { id: 'general', label: 'General', icon: <><line x1="4" y1="8" x2="20" y2="8" /><circle cx="9" cy="8" r="2.2" /><line x1="4" y1="16" x2="20" y2="16" /><circle cx="15" cy="16" r="2.2" /></> },
   { id: 'providers', label: 'Providers', icon: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></> },
   { id: 'aliases', label: 'Model aliases', icon: <><path d="M20 12l-8 8-9-9V3h8z" /><circle cx="7.5" cy="7.5" r="1.4" /></> },
+  { id: 'pricing', label: 'Pricing', icon: <><circle cx="12" cy="12" r="9" /><path d="M14.5 9a2.5 2.5 0 0 0-2.5-1.6c-1.5 0-2.5.8-2.5 2s1 1.6 2.5 2 2.5.9 2.5 2-1 2-2.5 2A2.5 2.5 0 0 1 9.5 15" /><line x1="12" y1="6" x2="12" y2="18" /></> },
   { id: 'plans', label: 'Plans', icon: <><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /></> },
   { id: 'devices', label: 'Devices', icon: <><rect x="3" y="4" width="18" height="12" rx="1.5" /><line x1="8" y1="20" x2="16" y2="20" /><line x1="12" y1="16" x2="12" y2="20" /></> },
   { id: 'export', label: 'Export', icon: <><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 21h16" /></> },
@@ -102,6 +103,7 @@ export function Settings({ period, refreshToken = 0, onNavigate, initialPane, cl
           {pane === 'general' && <GeneralPane period={period} refreshToken={refreshToken} claudeConfigs={claudeConfigs} claudeConfigSource={claudeConfigSource} />}
           {pane === 'providers' && <ProvidersPane period={period} refreshToken={refreshToken} />}
           {pane === 'aliases' && <AliasesPane refreshToken={refreshToken} />}
+          {pane === 'pricing' && <PricingPane refreshToken={refreshToken} />}
           {pane === 'plans' && <PlansPane period={period} refreshToken={refreshToken} onNavigate={onNavigate} />}
           {pane === 'devices' && <DevicesPane period={period} refreshToken={refreshToken} />}
           {pane === 'export' && <ExportPane period={period} refreshToken={refreshToken} />}
@@ -218,6 +220,71 @@ function AliasesPane({ refreshToken }: { refreshToken: number }) {
       {error && <p className="set-action-msg error">{error}</p>}
     </div></div>
     <p className="set-cap">Unknown models are priced at $0 until aliased. A local model can instead be credited with what it would have cost via model-savings.</p>
+  </section>
+}
+
+function priceRateSummary(o: PriceOverrideRow): string {
+  const parts = [`in ${o.inputPerM}`, `out ${o.outputPerM}`]
+  if (typeof o.cacheReadPerM === 'number') parts.push(`read ${o.cacheReadPerM}`)
+  if (typeof o.cacheCreationPerM === 'number') parts.push(`create ${o.cacheCreationPerM}`)
+  return parts.join(' · ')
+}
+
+// '' -> not provided; a positive finite number -> a rate; 'invalid' otherwise.
+function parseRate(raw: string): number | undefined | 'invalid' {
+  const trimmed = raw.trim()
+  if (trimmed === '') return undefined
+  const value = Number(trimmed)
+  if (!Number.isFinite(value) || value <= 0) return 'invalid'
+  return value
+}
+
+function PricingPane({ refreshToken }: { refreshToken: number }) {
+  const [actionNonce, setActionNonce] = useState(0)
+  const overrides = usePolled<PriceOverrideList>(() => codeburn.getPriceOverrides(), [refreshToken, actionNonce])
+  const [model, setModel] = useState('')
+  const [input, setInput] = useState('')
+  const [output, setOutput] = useState('')
+  const [cacheRead, setCacheRead] = useState('')
+  const [cacheCreation, setCacheCreation] = useState('')
+  const [error, setError] = useState('')
+
+  const complete = (result: ActionResult, added = false) => {
+    if (!result.ok) { setError(result.stderr || 'Price override action failed'); return }
+    setError('')
+    if (added) { setModel(''); setInput(''); setOutput(''); setCacheRead(''); setCacheCreation('') }
+    setActionNonce(value => value + 1)
+  }
+
+  const add = () => {
+    const fields: Array<[keyof PriceRates, string]> = [['input', input], ['output', output], ['cacheRead', cacheRead], ['cacheCreation', cacheCreation]]
+    const rates: PriceRates = {}
+    for (const [key, raw] of fields) {
+      const parsed = parseRate(raw)
+      if (parsed === 'invalid') { setError('Rates must be positive numbers (USD per 1M tokens).'); return }
+      if (parsed !== undefined) rates[key] = parsed
+    }
+    if (!model.trim()) { setError('Enter a model name.'); return }
+    if (rates.input === undefined || rates.output === undefined) { setError('Input and output rates are required.'); return }
+    setError('')
+    void codeburn.setPriceOverride(model.trim(), rates).then(result => complete(result, true))
+  }
+
+  return <section className="set-p on">
+    <div><h3 className="set-h">Pricing</h3><p className="set-sub">Override or add per-model rates so local or self-hosted models are priced. Rates are USD per 1,000,000 tokens.</p></div>
+    <div className="card"><div className="about-sec set-last-sec">
+      {overrides.error ? <SettingsErrorText error={overrides.error} /> : !overrides.data ? <p className="set-cap">Loading price overrides…</p> : overrides.data.overrides.length === 0 ? <p className="set-cap set-alias-empty">No price overrides configured. Add one below to price an unrecognized or local model.</p> : overrides.data.overrides.map(override => <div className="set-price-row" key={override.model}><span className="set-mono">{override.model}</span><span className="set-price-rates">{priceRateSummary(override)}</span><ConfirmButton label="Remove" prompt="Remove?" onConfirm={() => void codeburn.removePriceOverride(override.model).then(result => complete(result))} /></div>)}
+      <div className="set-price-form">
+        <input aria-label="Override model" className="set-input set-mono set-price-model" placeholder="model name" value={model} onChange={event => setModel(event.target.value)} />
+        <input aria-label="Input rate" className="set-input" inputMode="decimal" placeholder="input" value={input} onChange={event => setInput(event.target.value)} />
+        <input aria-label="Output rate" className="set-input" inputMode="decimal" placeholder="output" value={output} onChange={event => setOutput(event.target.value)} />
+        <input aria-label="Cache read rate" className="set-input" inputMode="decimal" placeholder="cache read" value={cacheRead} onChange={event => setCacheRead(event.target.value)} />
+        <input aria-label="Cache creation rate" className="set-input" inputMode="decimal" placeholder="cache create" value={cacheCreation} onChange={event => setCacheCreation(event.target.value)} />
+        <button className="btnp btnp-primary" disabled={!model.trim() || !input.trim() || !output.trim()} onClick={add}>Add</button>
+      </div>
+      {error && <p className="set-action-msg error">{error}</p>}
+    </div></div>
+    <p className="set-cap">Rates are USD per 1,000,000 tokens. Input and output are required; cache read and cache creation are optional. A configured model is overridden; an unknown one is added.</p>
   </section>
 }
 

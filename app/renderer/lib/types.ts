@@ -486,6 +486,67 @@ export type CompareJsonReport = {
   workingStyle: WorkingStyleRow[]
 }
 
+// ————— src/models.ts + src/audit-report.ts (audit --format json) —————
+
+/** Per-token rates used for pricing (src/models.ts ModelCosts). */
+export type ModelCosts = {
+  inputCostPerToken: number
+  outputCostPerToken: number
+  cacheWriteCostPerToken: number
+  cacheReadCostPerToken: number
+  webSearchCostPerRequest: number
+  fastMultiplier: number
+}
+
+/** One (provider, model) audit bucket (src/audit-report.ts AuditRow): raw
+ * provider token fields vs the normalized totals codeburn prices. */
+export type AuditRow = {
+  provider: string
+  providerDisplayName: string
+  model: string
+  modelDisplayName: string
+  calls: number
+  raw: {
+    inputTokens: number
+    outputTokens: number
+    reasoningTokens: number
+    cacheCreationInputTokens: number
+    cacheReadInputTokens: number
+    cachedInputTokens: number
+    webSearchRequests: number
+  }
+  displayed: {
+    inputTokens: number
+    outputTokens: number
+    cacheWriteTokens: number
+    cacheReadTokens: number
+  }
+  rates: ModelCosts | null
+  cost: {
+    input: number
+    output: number
+    cacheWrite: number
+    cacheRead: number
+    webSearch: number
+    recomputedTotalUSD: number
+  }
+  attributedCostUSD: number
+}
+
+// ————— src/main.ts (price-override --list --format json) —————
+
+/** Rates are USD per 1,000,000 tokens; cache rates are optional. */
+export type PriceOverrideRow = {
+  model: string
+  inputPerM: number
+  outputPerM: number
+  cacheReadPerM?: number
+  cacheCreationPerM?: number
+}
+export type PriceOverrideList = { overrides: PriceOverrideRow[]; configPath: string }
+/** A partial set of the four price-override rates, USD per 1M tokens. */
+export type PriceRates = { input?: number; output?: number; cacheRead?: number; cacheCreation?: number }
+
 // ————— IPC surface (preload contextBridge → window.codeburn) —————
 
 export interface CodeburnBridge {
@@ -507,6 +568,10 @@ export interface CodeburnBridge {
   getIdentity(): Promise<Identity>
   getAliases(): Promise<AliasRow[]>
   getProxyPaths(): Promise<string[]>
+  getAudit(period: Period, provider: string, range?: DateRange): Promise<AuditRow[]>
+  getPriceOverrides(): Promise<PriceOverrideList>
+  setPriceOverride(model: string, rates: PriceRates): Promise<ActionResult>
+  removePriceOverride(model: string): Promise<ActionResult>
   setCurrency(code: string): Promise<ActionResult>
   resetCurrency(): Promise<ActionResult>
   addAlias(from: string, to: string): Promise<ActionResult>

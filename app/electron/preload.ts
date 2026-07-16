@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Envelope } from './main'
 
 type DateRange = { from: string; to: string }
+type PriceRates = { input?: number; output?: number; cacheRead?: number; cacheCreation?: number }
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const res = (await ipcRenderer.invoke(channel, ...args)) as Envelope<T>
@@ -35,6 +36,10 @@ const bridge = {
   getIdentity: () => invoke('codeburn:getIdentity'),
   getAliases: () => invoke('codeburn:getAliases'),
   getProxyPaths: () => invoke('codeburn:getProxyPaths'),
+  getAudit: (period: string, provider: string, range?: DateRange) => invoke('codeburn:getAudit', period, provider, range),
+  getPriceOverrides: () => invoke('codeburn:getPriceOverrides'),
+  setPriceOverride: (model: string, rates: PriceRates) => invoke('codeburn:setPriceOverride', model, rates),
+  removePriceOverride: (model: string) => invoke('codeburn:removePriceOverride', model),
   setCurrency: (code: string) => invoke('codeburn:setCurrency', code),
   resetCurrency: () => invoke('codeburn:resetCurrency'),
   addAlias: (from: string, to: string) => invoke('codeburn:addAlias', from, to),
