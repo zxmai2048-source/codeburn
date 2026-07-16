@@ -4,6 +4,7 @@ import { CliErrorPanel } from '../components/CliErrorPanel'
 import { seriesColorForModel } from '../components/ListRow'
 import { Panel } from '../components/Panel'
 import { SegTabs } from '../components/SegTabs'
+import { StaleBanner } from '../components/StaleBanner'
 import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatCompact, formatUsd } from '../lib/format'
@@ -56,6 +57,7 @@ export function Models({
 
   return (
     <>
+      {report.error && <StaleBanner error={report.error} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'flex-start' }}>
         <SegTabs options={LENSES} value={lens} onChange={value => setLens(value as ModelsLens)} />
         <button type="button" className="btn btn-s" onClick={() => onNavigate?.('compare')}>

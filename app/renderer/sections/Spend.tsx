@@ -3,10 +3,23 @@ import { ListRow } from '../components/ListRow'
 import { Panel } from '../components/Panel'
 import { Sankey } from '../components/Sankey'
 import { StackedBars } from '../components/StackedBars'
+import { StaleBanner } from '../components/StaleBanner'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { DateRange, MenubarPayload, Period, SpendFlow } from '../lib/types'
+import { contiguousDailyWindow, localDateKey } from '../lib/period'
+import type { CliError, DateRange, MenubarPayload, Period, SpendFlow } from '../lib/types'
+
+const SPEND_CHART_DAYS = 15
+
+function providerLabel(provider: string): string {
+  if (provider === 'all') return 'All models'
+  return provider
+    .split(/[-\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
 
 function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
@@ -47,20 +60,34 @@ export function SpendContent({
     )
   }
 
-  return <SpendPage data={overview.data} flow={flow} />
+  return <SpendPage data={overview.data} flow={flow} provider={provider} range={range} staleError={overview.error} />
 }
 
 function SpendPage({
   data,
   flow,
+  provider,
+  range,
+  staleError,
 }: {
   data: MenubarPayload
   flow: ReturnType<typeof usePolled<SpendFlow>>
+  provider: string
+  range: DateRange | null
+  staleError: CliError | null
 }) {
-  // Use the real last-15 backfilled days directly. Rebuilding a calendar window
-  // client-side (contiguousDailyWindow) mismatched the CLI's date keys and
-  // zero-filled every day, leaving the chart empty.
-  const chartDaily = data.history.daily.slice(-15)
+  // `history.daily` is SPARSE (active days only), so zero-fill a contiguous
+  // calendar window client-side; date keys are localDateKey / the CLI dateKey,
+  // which match exactly, so real days always land in place.
+  const now = new Date()
+  const chartDaily = range
+    ? contiguousDailyWindow(data.history.daily, range.from, range.to)
+    : contiguousDailyWindow(
+        data.history.daily,
+        localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (SPEND_CHART_DAYS - 1))),
+        localDateKey(now),
+      )
+  const chartHasSpend = chartDaily.some(day => day.cost > 0)
   const projects = data.current.topProjects
   const breakdowns = [
     {
@@ -111,9 +138,10 @@ function SpendPage({
 
   return (
     <>
+      {staleError && <StaleBanner error={staleError} />}
       <div className="spend-top-row">
         <Panel title="Daily spend by model" className="spend-chart-panel">
-          {chartDaily.length ? <StackedBars daily={chartDaily} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
+          {chartHasSpend ? <StackedBars daily={chartDaily} fallbackLabel={providerLabel(provider)} /> : <EmptyNote>No model spend in this range yet.</EmptyNote>}
         </Panel>
         <Panel title="By project" right={projects.length ? `top ${projects.length}` : undefined} className="spend-scroll">
           {projects.length ? (

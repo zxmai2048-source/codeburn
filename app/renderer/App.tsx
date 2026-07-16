@@ -173,7 +173,7 @@ export function App() {
             />
             <div className="body">
               {section === 'overview' ? (
-                <OverviewContent period={period} overview={overview} onNavigate={navigate} />
+                <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} />
               ) : section === 'sessions' ? (
                 <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
               ) : section === 'spend' ? (
@@ -183,7 +183,7 @@ export function App() {
               ) : section === 'models' ? (
                 <Models period={period} provider={provider} range={customRange} refreshToken={refreshToken} onNavigate={navigate} />
               ) : section === 'compare' ? (
-                <Compare period={period} provider={provider} refreshToken={refreshToken} />
+                <Compare period={period} provider={provider} range={customRange} refreshToken={refreshToken} />
               ) : (
                 <SectionPlaceholder title={SECTION_TITLES[section]} />
               )}

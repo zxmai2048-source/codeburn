@@ -135,7 +135,7 @@ describe('Spend', () => {
     vi.useRealTimers()
   })
 
-  it('renders the real last-15 spend entries, date axis, projects, and Sankey ribbons', async () => {
+  it('zero-fills a contiguous 15-day calendar window with a real date axis, projects, and Sankey ribbons', async () => {
     getOverview.mockResolvedValue(makePayload(new Date()))
     getSpendFlow.mockResolvedValue(makeFlow())
 
@@ -146,18 +146,17 @@ describe('Spend', () => {
     expect(screen.getByText('agentseal-dash')).toBeInTheDocument()
     expect(screen.getByText('top 2')).toBeInTheDocument()
 
+    // Sparse history is zero-filled into 15 contiguous days ending today (Jul 10),
+    // so the axis reflects real calendar spacing rather than compressing gaps.
     const barColumns = container.querySelectorAll('.sbars .c')
-    expect(barColumns).toHaveLength(5)
+    expect(barColumns).toHaveLength(15)
     expect([...barColumns].map(col => col.getAttribute('data-date'))).toEqual([
-      '2026-06-30',
-      '2026-07-01',
-      '2026-07-04',
-      '2026-07-06',
-      '2026-07-10',
+      '2026-06-26', '2026-06-27', '2026-06-28', '2026-06-29', '2026-06-30',
+      '2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04', '2026-07-05',
+      '2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10',
     ])
     const ticks = container.querySelectorAll('.sbars-wrap > .ov-xax span')
-    expect(ticks).toHaveLength(2)
-    expect([...ticks].map(tick => tick.textContent)).toEqual(['Jun 30', 'Jul 10'])
+    expect([...ticks].map(tick => tick.textContent)).toEqual(['Jun 26', 'Jun 30', 'Jul 4', 'Jul 8', 'Jul 10'])
 
     expect(container.querySelectorAll('[data-testid="sankey-ribbon"]')).toHaveLength(makeFlow().links.length)
   })

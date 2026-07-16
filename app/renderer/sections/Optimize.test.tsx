@@ -208,6 +208,25 @@ describe('Optimize', () => {
     expect(screen.getByText('No abandoned sessions in this range yet.')).toBeInTheDocument()
   })
 
+  it('labels the Fixes tab with the rendered list length, not the menubar-wide findingCount', async () => {
+    const payload = makePayload()
+    // The menubar counts 25 findings, but the Fixes tab only renders topFindings.
+    payload.optimize = {
+      findingCount: 25,
+      savingsUSD: 94.4,
+      topFindings: [
+        { title: 'A', impact: 'high', savingsUSD: 1 },
+        { title: 'B', impact: 'low', savingsUSD: 1 },
+      ],
+    }
+    getOverview.mockResolvedValue(payload)
+
+    render(<Optimize period="30days" provider="all" />)
+
+    expect(await screen.findByRole('button', { name: 'Fixes 2' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Fixes 25' })).not.toBeInTheDocument()
+  })
+
   it('passes provider and custom range to the optimize report bridge', async () => {
     render(<Optimize period="30days" provider="claude" range={{ from: '2026-07-01', to: '2026-07-11' }} />)
     await screen.findByText('Opus is doing your small talk')

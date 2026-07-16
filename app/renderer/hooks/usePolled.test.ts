@@ -36,4 +36,23 @@ describe('usePolled', () => {
     await act(async () => { resolvers[1]!('A-stale') })
     expect(result.current.data).toBe('B-fresh')
   })
+
+  it('keeps last-good data and exposes the error when a background reload fails', async () => {
+    const calls: Array<{ resolve: (v: string) => void; reject: (e: unknown) => void }> = []
+    const fetcher = vi.fn(() => new Promise<string>((resolve, reject) => { calls.push({ resolve, reject }) }))
+    const { result } = renderHook(() => usePolled(fetcher, []))
+
+    // Establish last-good data.
+    await act(async () => { calls[0]!.resolve('good') })
+    expect(result.current.data).toBe('good')
+    expect(result.current.error).toBeNull()
+
+    // A reload clears the error up front; if it fails, data is retained and the
+    // error is surfaced alongside it (the StaleBanner condition).
+    act(() => { result.current.refresh() })
+    expect(result.current.error).toBeNull()
+    await act(async () => { calls[1]!.reject({ kind: 'nonzero', message: 'boom' }) })
+    expect(result.current.data).toBe('good')
+    expect(result.current.error).toMatchObject({ kind: 'nonzero', message: 'boom' })
+  })
 })

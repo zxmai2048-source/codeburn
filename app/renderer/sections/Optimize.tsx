@@ -3,6 +3,7 @@ import { Fragment, useState } from 'react'
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
 import { SegTabs } from '../components/SegTabs'
+import { StaleBanner } from '../components/StaleBanner'
 import { type Polled, usePolled } from '../hooks/usePolled'
 import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
@@ -61,11 +62,13 @@ export function OptimizeContent({
     { value: 'waste', label: `Waste ${formatUsd(overview.data.optimize.savingsUSD)}` },
     { value: 'reverts', label: `Reverts ${revertedTotal}` },
     { value: 'abandoned', label: `Abandoned ${abandonedTotal}` },
-    { value: 'fixes', label: `Fixes ${overview.data.optimize.findingCount.toLocaleString('en-US')}` },
+    // The Fixes tab renders topFindings (capped list), so label the count that shows.
+    { value: 'fixes', label: `Fixes ${overview.data.optimize.topFindings.length.toLocaleString('en-US')}` },
   ]
 
   return (
     <>
+      {overview.error && <StaleBanner error={overview.error} />}
       <SegTabs
         options={options}
         value={tab}

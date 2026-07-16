@@ -2,8 +2,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { Polled } from '../hooks/usePolled'
 import type { ActReportJson, MenubarPayload, YieldJsonReport } from '../lib/types'
-import { Overview, localDateKey } from './Overview'
+import { Overview, OverviewContent, localDateKey } from './Overview'
+
+function polled(data: MenubarPayload): Polled<MenubarPayload> {
+  return { data, error: null, loading: false, lastSuccessAt: Date.now(), refresh: vi.fn() }
+}
 
 // Mock the typed bridge so the section fetches our payload instead of spawning
 // the CLI. `normalizeCliError` (used by usePolled) is kept from the real module.
@@ -209,7 +214,8 @@ describe('Overview', () => {
     const modelRows = within(modelsTable).getAllByRole('row')
     expect(modelRows[1]).toHaveTextContent('claude-opus-4')
     expect(modelRows[1]).toHaveTextContent('1.2B')
-    expect(modelRows[1]).toHaveTextContent('60.0M')
+    // Tokens now use the shared formatCompact helper (drops a trailing .0).
+    expect(modelRows[1]).toHaveTextContent('60M')
     expect(modelRows[1]).toHaveTextContent('$171.20')
     expect(modelRows[1]).toHaveTextContent('900')
     expect(modelRows[2]).toHaveTextContent('claude-haiku-4')
@@ -237,7 +243,7 @@ describe('Overview', () => {
     // equal the saved figure on some dates, so an unscoped getByText('$84.20')
     // would match two cards.
     expect(within(kpis).getByText('$84.20')).toBeInTheDocument()
-    expect(within(kpis).getByText('from 11 applied fixes')).toBeInTheDocument()
+    expect(within(kpis).getByText('across 11 fixes')).toBeInTheDocument()
     const statsCard = screen.getByText('Month to date').closest('.ov-stats3')
     expect(statsCard).toHaveClass('ov-card')
     expect(statsCard?.children).toHaveLength(2)
@@ -271,26 +277,28 @@ describe('Overview', () => {
 
     render(<Overview period="30days" provider="all" />)
 
-    expect(await screen.findByText('from 0 applied fixes')).toBeInTheDocument()
+    expect(await screen.findByText('across 0 fixes')).toBeInTheDocument()
     await waitFor(() => expect(getActReport).toHaveBeenCalled())
     expect(screen.getByText('$0.00')).toBeInTheDocument()
   })
 
-  it('shows the available real history entries without zero-filling a 30-day window', async () => {
+  it('zero-fills a contiguous 30-day window from sparse history', async () => {
     const now = new Date()
     const payload = makePayload(now)
     payload.history.daily = payload.history.daily.slice(-5)
     getOverview.mockResolvedValue(payload)
 
-    // The daily chart is a trend, not scoped to the period selector: even for a
-    // short period like "week" it uses the real history entries and does not
-    // synthesize zero-height bars to reach 30 days.
+    // history.daily is sparse (active days only). The daily chart zero-fills a
+    // contiguous calendar window (at least 30 days) so gaps read as real
+    // calendar time instead of compressed bars — the date keys match localDateKey.
     const { container } = render(<Overview period="week" provider="all" />)
 
     expect(await screen.findByText('parser-service')).toBeInTheDocument()
     const bars = container.querySelectorAll('.chart .col')
-    expect(bars).toHaveLength(5)
-    expect([...bars].map(bar => bar.getAttribute('data-cost'))).toEqual(['5', '5', '5', '5', '6.2'])
+    expect(bars).toHaveLength(30)
+    // The five real days keep their cost at the end; the leading 25 days are zeros.
+    expect([...bars].slice(-5).map(bar => bar.getAttribute('data-cost'))).toEqual(['5', '5', '5', '5', '6.2'])
+    expect([...bars].slice(0, 25).every(bar => bar.getAttribute('data-cost') === '0')).toBe(true)
   })
 
   it('computes month-to-date, projection, and previous-month pace', async () => {
@@ -401,5 +409,76 @@ describe('Overview', () => {
     render(<Overview period="30days" provider="all" />)
 
     expect(await screen.findByText(/Locate the codeburn CLI/i)).toBeInTheDocument()
+  })
+
+  it('sources Models this period from current.topModels when a provider filter is active', async () => {
+    const now = new Date()
+    const payload = makePayload(now)
+    // Provider-filtered CLI output: history.daily loses its per-model breakdown,
+    // but current is already provider-scoped.
+    payload.history.daily = payload.history.daily.map(day => ({ ...day, topModels: [] }))
+    payload.current.topModels = [
+      { name: 'gpt-5.5-codex', cost: 120, savingsUSD: 0, savingsBaselineModel: '', calls: 240 },
+      { name: 'claude-opus-4', cost: 60, savingsUSD: 0, savingsBaselineModel: '', calls: 90 },
+    ]
+
+    render(<OverviewContent period="30days" provider="codex" overview={polled(payload)} />)
+
+    const modelsTable = await screen.findByRole('table', { name: 'Models this period' })
+    const rows = within(modelsTable).getAllByRole('row')
+    // Sourced from current.topModels (cost-sorted), not the now-empty daily aggregation.
+    expect(rows[1]).toHaveTextContent('gpt-5.5-codex')
+    expect(rows[1]).toHaveTextContent('$120.00')
+    expect(rows[1]).toHaveTextContent('240')
+    expect(rows[2]).toHaveTextContent('claude-opus-4')
+    // current.topModels carries no per-model tokens → both token cells show a dash.
+    expect(within(rows[1] as HTMLElement).getAllByText('—')).toHaveLength(2)
+  })
+
+  it('suppresses the week-over-week anomaly and MTD card for a custom range', async () => {
+    const now = new Date()
+    const overview = polled(makePayload(now))
+
+    const { rerender } = render(<OverviewContent period="30days" provider="all" overview={overview} />)
+    // Baseline (no range): the MTD card and a week-over-week signal are present.
+    expect(await screen.findByText('Month to date')).toBeInTheDocument()
+    expect(screen.getAllByText(/than last week/).length).toBeGreaterThan(0)
+
+    const from = localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2))
+    const to = localDateKey(now)
+    rerender(<OverviewContent period="30days" provider="all" range={{ from, to }} overview={overview} />)
+
+    expect(screen.queryByText('Month to date')).not.toBeInTheDocument()
+    expect(screen.queryByText('Projected month')).not.toBeInTheDocument()
+    expect(screen.queryByText(/than last week/)).toBeNull()
+    expect(screen.getByText(/is the biggest driver in this range/)).toBeInTheDocument()
+  })
+
+  it('renders local-model savings in the hero only when present', async () => {
+    const now = new Date()
+    const payload = makePayload(now)
+    payload.current.localModelSavings = { totalUSD: 42.5, calls: 10, byModel: [], byProvider: [] }
+
+    render(<OverviewContent period="30days" provider="all" overview={polled(payload)} />)
+
+    expect(await screen.findByText('Saved by applied fixes')).toBeInTheDocument()
+    expect(screen.getByText('Saved via local models')).toBeInTheDocument()
+    expect(screen.getByText('$42.50')).toBeInTheDocument()
+    expect(screen.queryByText('Saved to date')).not.toBeInTheDocument()
+  })
+
+  it('shows a stale banner when last-good data is present but the latest poll failed', async () => {
+    const now = new Date()
+    const overview: Polled<MenubarPayload> = {
+      data: makePayload(now),
+      error: { kind: 'nonzero', message: 'codeburn exited 1' },
+      loading: false,
+      lastSuccessAt: Date.now(),
+      refresh: vi.fn(),
+    }
+
+    render(<OverviewContent period="30days" provider="all" overview={overview} />)
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Refresh failed, showing last good data · codeburn exited 1')
   })
 })

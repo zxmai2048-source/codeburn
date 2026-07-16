@@ -28,4 +28,23 @@ describe('StackedBars', () => {
     const ticks = container.querySelectorAll('.sbars-wrap > .ov-xax span')
     expect([...ticks].map(tick => tick.textContent)).toEqual(['Jul 1', 'Jul 5', 'Jul 9', 'Jul 13', 'Jul 16'])
   })
+
+  it('draws a single cost-only fallback bar and a provider legend when a day has cost but no model breakdown', () => {
+    // Provider-filtered days: cost present, topModels empty (the Swift menubar
+    // draws these from day.cost). A zero-cost day stays empty.
+    const daily = [
+      { ...entry(9), cost: 0 },
+      { ...entry(10), cost: 12 },
+    ]
+    const { container } = render(<StackedBars daily={daily} fallbackLabel="Claude" />)
+
+    const columns = container.querySelectorAll('.sbars .c')
+    expect(columns[0].querySelectorAll('.s')).toHaveLength(0)
+    expect(columns[1].querySelectorAll('.s')).toHaveLength(1)
+    expect(columns[1].querySelector('.s-other')).toBeInTheDocument()
+
+    const legend = container.querySelector('.legend')!
+    expect(legend.querySelectorAll('span')).toHaveLength(1)
+    expect(legend).toHaveTextContent('Claude')
+  })
 })

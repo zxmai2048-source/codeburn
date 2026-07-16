@@ -6,7 +6,7 @@ import { Panel } from '../components/Panel'
 import { usePolled } from '../hooks/usePolled'
 import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { CompareJsonReport, ComparisonRow, ModelStats, Period, WorkingStyleRow } from '../lib/types'
+import type { CompareJsonReport, ComparisonRow, DateRange, ModelStats, Period, WorkingStyleRow } from '../lib/types'
 
 function fmtMetric(v: number | null, fn: 'cost' | 'number' | 'percent' | 'decimal'): string {
   if (v === null) return '—'
@@ -20,13 +20,25 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p style={{ color: 'var(--t3)', margin: 0, fontSize: 12 }}>{children}</p>
 }
 
+// The CLI `compare` command has no --from/--to, so a custom range falls back to
+// the selected period. Say so instead of silently ignoring the dates.
+function RangeNote() {
+  return (
+    <p className="cmp-range-note" role="status" style={{ color: 'var(--mut)', margin: '0 0 6px', fontSize: 11.5 }}>
+      Compare uses the selected period, custom dates are not supported yet.
+    </p>
+  )
+}
+
 export function Compare({
   period,
   provider,
+  range = null,
   refreshToken = 0,
 }: {
   period: Period
   provider: string
+  range?: DateRange | null
   refreshToken?: number
 }) {
   const models = usePolled<ModelStats[]>(
@@ -71,6 +83,7 @@ export function Compare({
 
   return (
     <>
+      {range && <RangeNote />}
       <div className="cmp-picker" aria-label="Models being compared">
         <Dropdown
           id="compare-first-model"
@@ -231,7 +244,8 @@ function CategoryCard({ report }: { report: CompareJsonReport }) {
 }
 
 function cacheHitRate(model: ModelStats): string {
-  const total = model.inputTokens + model.cacheReadTokens + model.cacheWriteTokens
+  // reads over reads + fresh input (matches menubar-json + compare-stats).
+  const total = model.inputTokens + model.cacheReadTokens
   return total > 0 ? `${Math.round(model.cacheReadTokens / total * 100)}%` : '—'
 }
 

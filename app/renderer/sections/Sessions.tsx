@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
 import { SegTabs } from '../components/SegTabs'
+import { StaleBanner } from '../components/StaleBanner'
 import { Stat } from '../components/Stat'
 import { usePolled } from '../hooks/usePolled'
 import { formatCompact, formatDayLong, formatDayShort, formatDuration, formatUsd, shortenProjectPath } from '../lib/format'
@@ -159,6 +160,7 @@ export function Sessions({
 
   return (
     <div className="sessions-list-view">
+      {report.error && <StaleBanner error={report.error} />}
       <div className="sessions-toolbar">
         <input
           className="sessions-search"

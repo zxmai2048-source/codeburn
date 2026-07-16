@@ -32,6 +32,9 @@ export function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[], interva
   const load = useCallback(() => {
     const epoch = ++epochRef.current
     setLoading(true)
+    // Clear any prior error at the start of each attempt so a fresh poll never
+    // shows a stale banner while it is still in flight; last-good `data` stays.
+    setError(null)
     fetcher()
       .then(result => {
         if (epochRef.current !== epoch) return

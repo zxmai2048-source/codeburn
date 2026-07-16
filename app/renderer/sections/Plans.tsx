@@ -1,6 +1,7 @@
 import { CliErrorPanel } from '../components/CliErrorPanel'
 import { Panel } from '../components/Panel'
 import type { Section } from '../components/Sidebar'
+import { StaleBanner } from '../components/StaleBanner'
 import { usePolled } from '../hooks/usePolled'
 import { formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
@@ -71,6 +72,7 @@ export function Plans({ period, refreshToken = 0, onNavigate }: { period: Period
         </button>
       </div>
       <div className="body">
+        {budgetReport.data && budgetReport.error && <StaleBanner error={budgetReport.error} />}
         {renderQuota(quota.data, quota.error)}
         {renderBudgetPlans(budgetReport.data, budgetReport.error, manualPlans)}
       </div>

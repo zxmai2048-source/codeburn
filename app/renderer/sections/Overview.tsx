@@ -5,13 +5,15 @@ import { CliErrorPanel } from '../components/CliErrorPanel'
 import { ActivityHeatmap } from '../components/ActivityHeatmap'
 import { ListRow } from '../components/ListRow'
 import { Panel } from '../components/Panel'
+import { StaleBanner } from '../components/StaleBanner'
 import { type Polled, usePolled } from '../hooks/usePolled'
-import { formatUsd } from '../lib/format'
+import { formatCompact, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import { formatChartDate, localDateKey, sliceDailyToPeriod } from '../lib/period'
+import { contiguousDailyWindow, formatChartDate, localDateKey, sliceDailyToPeriod, sliceDailyToRange } from '../lib/period'
 import type {
   ActReportJson,
   DailyHistoryEntry,
+  DateRange,
   MenubarPayload,
   Period,
   YieldJsonReport,
@@ -126,7 +128,7 @@ function CostPerOutcome({ outcome }: { outcome: Polled<YieldJsonReport> }) {
 
 type Anomaly = { lead: string; value: string; tail: string }
 
-function deriveAnomalies(data: MenubarPayload, now: Date): Anomaly[] {
+function deriveAnomalies(data: MenubarPayload, now: Date, includeWeekOverWeek = true): Anomaly[] {
   const anomalies: Anomaly[] = []
   const todayKey = localDateKey(now)
   const today = data.history.daily.find(day => day.date === todayKey)
@@ -144,7 +146,7 @@ function deriveAnomalies(data: MenubarPayload, now: Date): Anomaly[] {
     anomalies.push({ lead: "Today's spend is ", value: `${ratio.toFixed(1).replace(/\.0$/, '')}×`, tail: ` your typical ${weekday}.` })
   }
 
-  if (data.history.daily.length >= 14) {
+  if (includeWeekOverWeek && data.history.daily.length >= 14) {
     const recent14 = data.history.daily.slice(-14)
     const currentWeek = mean(recent14.slice(-7).map(day => day.cost))
     const priorWeek = mean(recent14.slice(0, 7).map(day => day.cost))
@@ -267,19 +269,21 @@ function formatShortDay(date: string): string {
   return `${month}/${day}`
 }
 
-function formatTokens(value: number): string {
-  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`
-  if (value >= 1e3) return `${(value / 1e3).toFixed(0)}K`
-  return String(Math.round(value))
-}
-
 type AggregatedModel = {
   name: string
   cost: number
   calls: number
-  inputTokens: number
-  outputTokens: number
+  // Absent in provider-filtered mode: `current.topModels` carries no per-model
+  // token counts, so the table shows "—" rather than a misleading zero.
+  inputTokens?: number
+  outputTokens?: number
+}
+
+/** Provider-filtered source: `current.topModels` is already period/range/provider-scoped by the CLI. */
+function topModelsToAggregated(models: MenubarPayload['current']['topModels']): AggregatedModel[] {
+  return models
+    .map(model => ({ name: model.name, cost: model.cost, calls: model.calls }))
+    .sort((a, b) => b.cost - a.cost)
 }
 
 function aggregateModels(daily: DailyHistoryEntry[]): AggregatedModel[] {
@@ -295,8 +299,8 @@ function aggregateModels(daily: DailyHistoryEntry[]): AggregatedModel[] {
       }
       row.cost += model.cost
       row.calls += model.calls
-      row.inputTokens += model.inputTokens
-      row.outputTokens += model.outputTokens
+      row.inputTokens = (row.inputTokens ?? 0) + model.inputTokens
+      row.outputTokens = (row.outputTokens ?? 0) + model.outputTokens
       byName.set(model.name, row)
     }
   }
@@ -322,8 +326,8 @@ function ModelsTable({ models }: { models: AggregatedModel[] }) {
           {models.map(model => (
             <tr key={model.name}>
               <td className="ov-model-name">{model.name}</td>
-              <td className="num mono">{formatTokens(model.inputTokens)}</td>
-              <td className="num mono">{formatTokens(model.outputTokens)}</td>
+              <td className="num mono">{model.inputTokens === undefined ? '—' : formatCompact(model.inputTokens)}</td>
+              <td className="num mono">{model.outputTokens === undefined ? '—' : formatCompact(model.outputTokens)}</td>
               <td className="num mono">{formatUsd(model.cost)}</td>
               <td className="num">{model.calls.toLocaleString('en-US')}</td>
             </tr>
@@ -447,15 +451,19 @@ function TopActivities({ activities }: { activities: MenubarPayload['current']['
 
 export function Overview({ period, provider }: { period: Period; provider: string }) {
   const overview = usePolled<MenubarPayload>(() => codeburn.getOverview(period, provider), [period, provider])
-  return <OverviewContent period={period} overview={overview} />
+  return <OverviewContent period={period} provider={provider} overview={overview} />
 }
 
 export function OverviewContent({
   period,
+  provider = 'all',
+  range = null,
   overview,
   onNavigate,
 }: {
   period: Period
+  provider?: string
+  range?: DateRange | null
   overview: Polled<MenubarPayload>
   onNavigate?: (section: 'optimize') => void
 }) {
@@ -470,10 +478,25 @@ export function OverviewContent({
   }
 
   const now = new Date()
+  const rangeActive = !!range
   const stats = deriveStats(data, now)
   const periodDaily = sliceDailyToPeriod(data.history.daily, period, now)
-  const chartDaily = data.history.daily.slice(-Math.max(30, periodDaily.length))
-  const models = aggregateModels(periodDaily)
+  // Daily chart: contiguous zero-filled calendar window. A custom range spans
+  // [from..to]; otherwise the trend covers at least the last 30 days, extended
+  // back to the earliest active day already in the period window.
+  const defaultChartStart = localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29))
+  const chartDaily = rangeActive
+    ? contiguousDailyWindow(data.history.daily, range.from, range.to)
+    : contiguousDailyWindow(
+        data.history.daily,
+        periodDaily[0] && periodDaily[0].date < defaultChartStart ? periodDaily[0].date : defaultChartStart,
+        localDateKey(now),
+      )
+  // Provider-filtered history.daily has empty topModels, so source the models
+  // table from current.topModels (already period/range/provider-scoped) instead.
+  const models = provider !== 'all'
+    ? topModelsToAggregated(data.current.topModels)
+    : aggregateModels(rangeActive ? sliceDailyToRange(data.history.daily, range.from, range.to) : periodDaily)
   const recent14 = data.history.daily.slice(-14)
   const weekNow = mean(recent14.slice(-7).map(day => day.cost))
   const weekPrior = mean(recent14.slice(-14, -7).map(day => day.cost))
@@ -482,24 +505,32 @@ export function OverviewContent({
   const topModel = data.current.topModels[0]
   const saved = actReport.data?.totals.realizedCostUSD ?? 0
   const applied = saved > 0 ? (actReport.data?.totals.measuredActions ?? 0) : 0
-  const anomalies = deriveAnomalies(data, now)
+  const localSaved = data.current.localModelSavings.totalUSD
+  // A custom range has no meaningful "vs last week" or month-to-date baseline.
+  const anomalies = deriveAnomalies(data, now, !rangeActive)
   return (
     <div className="ov-dashboard">
+      {error && <StaleBanner error={error} />}
       <div className="ov-card ov-hero-split" aria-label="Key performance indicators">
         <div className="ov-hero-main">
           <div className="ov-hero-top"><span className="ov-label">{data.current.label}</span><span className="ov-streak"><b>{streakDays(data.history.daily, now)}</b>-day streak</span></div>
           <CountUp value={data.current.cost} />
           <div className="ov-hero-sub">{data.current.calls.toLocaleString('en-US')} calls · {data.current.sessions.toLocaleString('en-US')} sessions</div>
-          <div className="ov-saved-line"><span>Saved to date</span><strong>{formatUsd(saved)}</strong><small>from {applied} applied fixes</small></div>
+          <div className="ov-saved-line"><span>Saved by applied fixes</span><strong>{formatUsd(saved)}</strong><small>across {applied} {applied === 1 ? 'fix' : 'fixes'}</small></div>
+          {localSaved > 0 && (
+            <div className="ov-saved-line"><span>Saved via local models</span><strong>{formatUsd(localSaved)}</strong><small>local-model routing</small></div>
+          )}
         </div>
         <ActivityHeatmap daily={data.history.daily} bare />
         <EfficiencyScorecard current={data.current} bare />
       </div>
 
-      <div className="ov-card ov-stats3">
-        <div className="ov-stat"><div className="ov-label">Month to date</div><div className="v">{formatUsd(stats.mtd)}</div><div className="d">{stats.pacePct === null ? `No ${stats.prevMonthName} pace yet` : `${stats.pacePct >= 0 ? '+' : ''}${Math.round(stats.pacePct)}% vs ${stats.prevMonthName} pace`}</div></div>
-        <div className="ov-stat"><div className="ov-label">Projected month</div><div className="v">{formatUsd(stats.projected)} <small>est</small></div><div className="d warn">{formatUsd(Math.max(0, stats.projected - stats.mtd))} to go</div></div>
-      </div>
+      {!rangeActive && (
+        <div className="ov-card ov-stats3">
+          <div className="ov-stat"><div className="ov-label">Month to date</div><div className="v">{formatUsd(stats.mtd)}</div><div className="d">{stats.pacePct === null ? `No ${stats.prevMonthName} pace yet` : `${stats.pacePct >= 0 ? '+' : ''}${Math.round(stats.pacePct)}% vs ${stats.prevMonthName} pace`}</div></div>
+          <div className="ov-stat"><div className="ov-label">Projected month</div><div className="v">{formatUsd(stats.projected)} <small>est</small></div><div className="d warn">{formatUsd(Math.max(0, stats.projected - stats.mtd))} to go</div></div>
+        </div>
+      )}
 
       <div className="ov-card ov-panel ov-chart-widget">
         <div className="ov-panel-head"><h3>Daily spend</h3><span className="r">{topModel ? `Biggest driver: ${topModel.name}` : 'No model driver yet'}</span></div>
@@ -510,7 +541,9 @@ export function OverviewContent({
         <div className="ov-coach">
           <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
           <div className="ov-coach-tx">
-            {weeklyPct === null ? <>No prior-week pacing baseline yet</> : <>You're pacing <span className="num">{weeklyPct}% {weeklyDirection}</span> than last week</>}{topModel ? <>; <span className="num">{topModel.name}</span> is the biggest driver</> : ''}. <span className="num">{formatUsd(data.optimize.savingsUSD)}</span> is recoverable.
+            {rangeActive
+              ? <>{topModel ? <><span className="num">{topModel.name}</span> is the biggest driver in this range</> : 'No single model dominates this range'}. <span className="num">{formatUsd(data.optimize.savingsUSD)}</span> is recoverable.</>
+              : <>{weeklyPct === null ? <>No prior-week pacing baseline yet</> : <>You're pacing <span className="num">{weeklyPct}% {weeklyDirection}</span> than last week</>}{topModel ? <>; <span className="num">{topModel.name}</span> is the biggest driver</> : ''}. <span className="num">{formatUsd(data.optimize.savingsUSD)}</span> is recoverable.</>}
           </div>
           <button className="ov-coach-cta" type="button" onClick={() => onNavigate?.('optimize')}>Review →</button>
         </div>
