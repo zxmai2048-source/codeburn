@@ -174,11 +174,13 @@ desktop-v<version>      # e.g. desktop-v0.9.15
 This mirrors the menubar's `mac-v<version>` convention (see `../RELEASING.md`)
 and keeps the desktop app's tags in their own namespace, separate from the CLI
 (`v<version>`) and the menubar (`mac-v<version>`). Upload all of the artifacts
-above — the four macOS `.dmg`/`.zip` files, `CodeBurn Setup 0.9.15.exe`, and
-`CodeBurn-0.9.15.AppImage` — to the GitHub Release created at that tag. The
-website's download links **pin that tag** in their URLs, so the release name
-and the artifact filenames must match exactly (in particular the Windows
-installer's `CodeBurn Setup <version>.exe`, spaces included).
+above — the four macOS `.dmg`/`.zip` files, `CodeBurn-Setup-<version>.exe`,
+and `CodeBurn-<version>.AppImage` — to the GitHub Release created at that
+tag. The website's download links **pin that tag** in their URLs, so the
+release name and the artifact filenames must match exactly. (The Windows
+installer uses an explicit `nsis.artifactName` of
+`CodeBurn-Setup-${version}.${ext}` — electron-builder's default contains
+spaces, which make ugly percent-encoded URLs.)
 
 ## Verifying a build
 
@@ -228,20 +230,21 @@ a Developer ID signature and the app is not notarized. Concretely:
 
 ### First-open instructions for users
 
-Pick one:
+**Field-verified on macOS 15+ (Sequoia/Tahoe): an ad-hoc-signed, quarantined
+app gets the harsher "\[CodeBurn] is damaged and can't be opened. You should
+move it to the Trash." dialog, and the classic right-click → Open bypass does
+NOT work for it** (that trick only helps Developer-ID-signed, unnotarized
+apps). The reliable path is stripping the quarantine attribute:
 
-1. **Right-click (or Control-click) the app in Finder → Open → Open** in the
-   confirmation dialog. This is required only once; subsequent launches work
-   with a normal double-click.
-2. On macOS Ventura and later, if step 1's dialog does not offer an Open
-   button: **System Settings → Privacy & Security → scroll to Security →
-   "\[CodeBurn] was blocked..." → Open Anyway**, then confirm in the dialog
-   that appears on the next open attempt.
-3. From the command line, strip the quarantine attribute before first launch
-   (equivalent effect, no dialog at all):
-   ```sh
-   xattr -cr /Applications/CodeBurn.app
-   ```
+```sh
+# after dragging CodeBurn.app from the dmg into /Applications
+xattr -cr /Applications/CodeBurn.app
+```
+
+One time only; subsequent launches work normally. **System Settings →
+Privacy & Security → "Open Anyway"** may also appear after a blocked attempt
+and works when offered, but is not shown in all cases for ad-hoc builds —
+document the `xattr` path as primary anywhere user-facing.
 
 None of these steps are needed for a `dmg`/`zip` built and opened locally on
 the same machine (no quarantine attribute is applied to files that were never
