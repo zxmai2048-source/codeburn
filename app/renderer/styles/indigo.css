@@ -86,7 +86,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.015em; margin: 0 0 6px
 
 /* cards — Dash0 style: header strip + body */
 .panel { background: var(--panel); border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 1px 2px rgba(0,0,0,.25); }
-.phead { display: flex; align-items: center; gap: 8px; padding: 8px 13px; background: var(--phead); border-bottom: 1px solid var(--hair); }
+.phead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--phead); border-bottom: 1px solid var(--hair); }
 .phead b { font-size: 11.5px; font-weight: 560; color: var(--t2); }
 .phead .r { margin-left: auto; font-size: 11px; color: var(--t3); }
 .phead .r.link { color: var(--lav); font-weight: 530; }
@@ -96,18 +96,6 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.015em; margin: 0 0 6px
 .stat .v { font-size: 24px; font-weight: 640; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .stat .v small { font-size: 11px; color: var(--t3); font-weight: 500; letter-spacing: 0; }
 .stat .d { font-size: 10.5px; margin-top: 4px; color: var(--t3); font-variant-numeric: tabular-nums; }
-
-/* capsule chart (ref: gradient pill bars) */
-.plot { position: relative; height: 108px; }
-.gl { position: absolute; left: 0; right: 30px; border-top: 1px solid var(--hair); }
-.gl em { position: absolute; right: -30px; top: -7px; font-style: normal; font-size: 9.5px; color: var(--t3); font-family: var(--mono); }
-.bars { position: absolute; inset: 0 30px 0 0; display: flex; align-items: flex-end; gap: 3px; padding: 0 8px; }
-.bars .c { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
-.bars .b { width: 100%; max-width: 12px; background: linear-gradient(to top, #232A3F, #2E3750); border-radius: 99px; min-height: 6px; }
-.bars .c.hi .b { background: var(--grad-bar); box-shadow: 0 0 18px rgba(91,140,255,.35); }
-.bars .c.hi2 .b { background: linear-gradient(to top, rgba(91,140,255,.4), #5B8CFF); }
-.days { display: flex; justify-content: space-between; padding: 6px 38px 0 8px; }
-.days span { font-size: 9.5px; color: var(--t3); font-family: var(--mono); }
 
 /* stacked multi-series bars */
 .spend-chart-panel { display: flex; flex-direction: column; }

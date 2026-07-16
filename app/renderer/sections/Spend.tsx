@@ -153,7 +153,7 @@ function SpendPage({
         <ProjectBreakdown projects={projects} />
       </div>
 
-      <Panel title="Cost flow · model → project" right="model → project flow for this range" bodyStyle={{ overflowX: 'auto' }}>
+      <Panel title="Cost flow · model → project" right="model → project flow for this range" className="scroll-x">
         {flow.data && flow.data.links.length ? (
           <Sankey flow={flow.data} />
         ) : flow.error ? (

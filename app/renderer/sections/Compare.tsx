@@ -21,7 +21,7 @@ function fmtMetric(v: number | null, fn: 'cost' | 'number' | 'percent' | 'decima
 // the selected period. Say so instead of silently ignoring the dates.
 function RangeNote() {
   return (
-    <p className="cmp-range-note" role="status" style={{ color: 'var(--mut)', margin: '0 0 6px', fontSize: 11.5 }}>
+    <p className="cmp-range-note" role="status">
       Compare uses the selected period, custom dates are not supported yet.
     </p>
   )
@@ -91,7 +91,6 @@ export function Compare({
             setModelA(next)
             if (next === modelB) setModelB(nudgeDistinct(next))
           }}
-          width={230}
         />
         <span className="cmp-vs">vs</span>
         <Dropdown
@@ -103,7 +102,6 @@ export function Compare({
             setModelB(next)
             if (next === modelA) setModelA(nudgeDistinct(next))
           }}
-          width={230}
         />
       </div>
       {modelA && modelB && modelA !== modelB && (

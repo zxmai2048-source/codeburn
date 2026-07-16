@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 /** Dash0-style card: optional `.phead` title strip + `.pbody` content. */
 export function Panel({
@@ -6,7 +6,6 @@ export function Panel({
   right,
   rightLink,
   className,
-  bodyStyle,
   children,
 }: {
   title?: ReactNode
@@ -14,7 +13,6 @@ export function Panel({
   /** Render the `right` slot as a lavender action link (`.r.link`, e.g. "See all ›"). */
   rightLink?: boolean
   className?: string
-  bodyStyle?: CSSProperties
   children?: ReactNode
 }) {
   return (
@@ -25,7 +23,7 @@ export function Panel({
           {right !== undefined && <span className={rightLink ? 'r link' : 'r'}>{right}</span>}
         </div>
       )}
-      <div className="pbody" style={bodyStyle}>
+      <div className="pbody">
         {children}
       </div>
     </div>

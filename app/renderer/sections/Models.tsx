@@ -99,7 +99,7 @@ function ModelsUsage({
   return (
     <>
       {report.error && <StaleBanner error={report.error} />}
-      <Panel bodyStyle={{ overflowX: 'auto' }}>
+      <Panel className="scroll-x">
         {report.data.length ? (
           <ModelsTable rows={report.data} byTask={byTask} onAddAlias={onAddAlias} />
         ) : (
@@ -146,7 +146,7 @@ function AuditLens({
   return (
     <>
       {report.error && <StaleBanner error={report.error} />}
-      <Panel bodyStyle={{ overflowX: 'auto' }}>
+      <Panel className="scroll-x">
         {report.data.length ? (
           <AuditTable rows={report.data} />
         ) : (

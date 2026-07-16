@@ -321,7 +321,6 @@ function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | nu
   if (percent < 80) return null
 
   const exceeded = percent >= 100
-  const accent = exceeded ? 'var(--bad)' : 'var(--warn)'
   const spent = budget.kind === 'usd' ? formatUsd(used) : formatCompact(used)
   const cap = budget.kind === 'usd' ? formatUsd(budget.value) : formatCompact(budget.value)
   const text = exceeded
@@ -334,24 +333,9 @@ function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | nu
   }
 
   return (
-    <div
-      role="status"
-      className="daily-budget-banner"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '6px 16px',
-        fontSize: 12,
-        fontWeight: 550,
-        color: accent,
-        borderLeft: `3px solid ${accent}`,
-        borderBottom: '1px solid var(--line)',
-        lineHeight: 1.4,
-      }}
-    >
-      <span style={{ flex: 1 }}>{text}</span>
-      <button type="button" className="set-text-button" style={{ color: 'var(--mut)' }} onClick={dismiss}>Dismiss</button>
+    <div role="status" className={exceeded ? 'budget-banner exceeded' : 'budget-banner'}>
+      <span>{text}</span>
+      <button type="button" className="set-text-button" onClick={dismiss}>Dismiss</button>
     </div>
   )
 }
