@@ -74,6 +74,8 @@ const ARGV_CASES: Array<{ channel: string; args: unknown[]; argv: string[] }> = 
   { channel: 'codeburn:getSpendFlow', args: ['month', 'openai'], argv: ['spend', '--format', 'flow-json', '--period', 'month', '--provider', 'openai'] },
   { channel: 'codeburn:getOptimizeReport', args: ['month', 'openai'], argv: ['optimize', '--format', 'json', '--period', 'month', '--provider', 'openai'] },
   { channel: 'codeburn:getOverview', args: ['30days', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--from', '2026-07-01', '--to', '2026-07-11'] },
+  { channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, 'claude-config:91dda17e8cf35193'], argv: ['status', '--format', 'menubar-json', '--period', '30days', '--claude-config-source', 'claude-config:91dda17e8cf35193'] },
+  { channel: 'codeburn:getOverview', args: ['month', 'claude', { from: '2026-07-01', to: '2026-07-11' }, 'claude-desktop:980e1e488a654830'], argv: ['status', '--format', 'menubar-json', '--period', 'month', '--provider', 'claude', '--from', '2026-07-01', '--to', '2026-07-11', '--claude-config-source', 'claude-desktop:980e1e488a654830'] },
   { channel: 'codeburn:getModels', args: ['week', 'claude', true, { from: '2026-07-01', to: '2026-07-11' }], argv: ['models', '--format', 'json', '--period', 'week', '--provider', 'claude', '--by-task', '--from', '2026-07-01', '--to', '2026-07-11'] },
   { channel: 'codeburn:getYield', args: ['today', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['yield', '--format', 'json', '--period', 'today', '--from', '2026-07-01', '--to', '2026-07-11'] },
   { channel: 'codeburn:getSpendFlow', args: ['month', 'all', { from: '2026-07-01', to: '2026-07-11' }], argv: ['spend', '--format', 'flow-json', '--period', 'month', '--from', '2026-07-01', '--to', '2026-07-11'] },
@@ -185,6 +187,8 @@ describe('createBridgeHandlers (IPC input validation)', () => {
     { name: 'device name that looks like a flag', channel: 'codeburn:removeDevice', args: ['-rf'] },
     { name: 'relative export path', channel: 'codeburn:exportData', args: ['json', 'all', 'relative/out'] },
     { name: 'compare model that looks like a flag', channel: 'codeburn:getCompare', args: ['month', 'all', '-a', 'model-b'] },
+    { name: 'claude config source that looks like a flag', channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, '-rf'] },
+    { name: 'claude config source with shell metacharacters', channel: 'codeburn:getOverview', args: ['30days', 'all', undefined, 'id; rm -rf'] },
   ]
 
   it.each(REJECTIONS)('rejects $name with a bad-args envelope and never spawns', async ({ channel, args }) => {

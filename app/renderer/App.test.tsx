@@ -9,11 +9,12 @@ const stored = new Map<string, string>()
 vi.stubGlobal('localStorage', {
   getItem: (key: string) => stored.get(key) ?? null,
   setItem: (key: string, value: string) => stored.set(key, value),
+  removeItem: (key: string) => stored.delete(key),
   clear: () => stored.clear(),
 })
 
 const mocks = vi.hoisted(() => ({
-  getOverview: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<MenubarPayload>>(),
+  getOverview: vi.fn<(period: string, provider: string, range?: DateRange, configSource?: string | null) => Promise<MenubarPayload>>(),
   getSpendFlow: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<SpendFlow>>(),
   getOptimizeReport: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<OptimizeJsonReport>>(),
   getModels: vi.fn(),
@@ -83,6 +84,22 @@ function overviewPayload(): MenubarPayload {
           cacheWriteTokens: 0,
           topModels: [],
         },
+      ],
+    },
+  }
+}
+
+const CONFIG_A = 'claude-config:aaaa000011112222'
+const CONFIG_B = 'claude-desktop:bbbb000011112222'
+
+function withConfigs(payload: MenubarPayload): MenubarPayload {
+  return {
+    ...payload,
+    claudeConfigs: {
+      selectedId: null,
+      options: [
+        { id: CONFIG_A, label: 'Default Claude', path: '/Users/x/.claude' },
+        { id: CONFIG_B, label: 'Claude Desktop', path: '/Users/x/Library/Application Support/Claude' },
       ],
     },
   }
@@ -242,6 +259,77 @@ describe('App shortcuts', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Grok Build' }))
 
     await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'grok'))
+  })
+
+  it('hides the Claude config picker when the payload carries no claudeConfigs', async () => {
+    render(<App />)
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Claude config source' })).not.toBeInTheDocument()
+  })
+
+  it('shows the config picker, re-fetches overview with the flag, and persists the choice', async () => {
+    mocks.getOverview.mockResolvedValue(withConfigs(overviewPayload()))
+    render(<App />)
+
+    const trigger = await screen.findByRole('button', { name: 'Claude config source' })
+    fireEvent.click(trigger)
+    fireEvent.click(await screen.findByRole('option', { name: 'Default Claude' }))
+
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all', undefined, CONFIG_A))
+    expect(localStorage.getItem('codeburn.claudeConfigSource')).toBe(CONFIG_A)
+  })
+
+  it('resets a non-Claude provider filter to all when a config is selected', async () => {
+    const payload = withConfigs(overviewPayload())
+    payload.current.providers = { claude: 10, codex: 2 }
+    mocks.getOverview.mockResolvedValue(payload)
+    render(<App />)
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Providers' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Codex' }))
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'codex'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude config source' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Default Claude' }))
+
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all', undefined, CONFIG_A))
+    // The Claude-incompatible provider filter must never reach the CLI with the flag.
+    expect(mocks.getOverview.mock.calls).not.toContainEqual(['30days', 'codex', undefined, CONFIG_A])
+  })
+
+  it('clears the config scope when a non-Claude provider is picked afterwards', async () => {
+    const payload = withConfigs(overviewPayload())
+    payload.current.providers = { claude: 10, codex: 2 }
+    mocks.getOverview.mockResolvedValue(payload)
+    render(<App />)
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude config source' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Default Claude' }))
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all', undefined, CONFIG_A))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Providers' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Codex' }))
+
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'codex'))
+    // The incompatible combination must never reach the CLI.
+    expect(mocks.getOverview.mock.calls).not.toContainEqual(['30days', 'codex', undefined, CONFIG_A])
+    expect(localStorage.getItem('codeburn.claudeConfigSource')).toBeNull()
+  })
+
+  it('boots with the persisted config source and clears it via All Claude configs', async () => {
+    localStorage.setItem('codeburn.claudeConfigSource', CONFIG_A)
+    mocks.getOverview.mockResolvedValue(withConfigs(overviewPayload()))
+    render(<App />)
+
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all', undefined, CONFIG_A))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Claude config source' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'All Claude configs' }))
+
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'all'))
+    expect(localStorage.getItem('codeburn.claudeConfigSource')).toBeNull()
   })
 
   it('applies a calendar range to overview and visible section polls', async () => {

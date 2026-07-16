@@ -52,6 +52,18 @@ function initialPeriod(): Period {
   return saved && isPeriod(saved) ? saved : '30days'
 }
 
+/** Persisted Claude config override (empty/absent = aggregate all configs). */
+function initialConfigSource(): string | null {
+  try { return globalThis.localStorage?.getItem('codeburn.claudeConfigSource') || null } catch { return null }
+}
+
+function persistConfigSource(id: string | null): void {
+  try {
+    if (id) globalThis.localStorage?.setItem('codeburn.claudeConfigSource', id)
+    else globalThis.localStorage?.removeItem('codeburn.claudeConfigSource')
+  } catch { /* storage can be unavailable */ }
+}
+
 function providerName(provider: string): string {
   if (provider === 'all') return 'All providers'
   return provider
@@ -78,15 +90,20 @@ export function App() {
   const [provider, setProvider] = useState<string>('all')
   const [detectedProviders, setDetectedProviders] = useState<Array<{ id: string; label: string }>>([])
   const [customRange, setCustomRange] = useState<DateRange | null>(null)
+  const [claudeConfigSource, setClaudeConfigSource] = useState<string | null>(initialConfigSource)
   const [refreshToken, setRefreshToken] = useState(0)
   const [now, setNow] = useState(() => Date.now())
   const [, setCurrencyTick] = useState(0)
 
+  // Preserve the 2/3-arg call shapes when no config is scoped so the CLI argv
+  // stays flag-free; only add --claude-config-source once a config is picked.
   const overview = usePolled<MenubarPayload>(
-    () => customRange
+    () => claudeConfigSource
+      ? codeburn.getOverview(period, provider, customRange ?? undefined, claudeConfigSource)
+      : customRange
       ? codeburn.getOverview(period, provider, customRange)
       : codeburn.getOverview(period, provider),
-    [period, provider, customRange?.from, customRange?.to],
+    [period, provider, customRange?.from, customRange?.to, claudeConfigSource],
   )
   const refreshOverview = overview.refresh
 
@@ -162,12 +179,36 @@ export function App() {
     }
   }
 
+  // A Claude config scopes Claude usage only, so a non-Claude provider filter
+  // would make the CLI reject the flag: reset it to 'all' first (a 'claude'
+  // filter is already compatible and is left alone).
+  const onConfigSelect = (id: string) => {
+    const next = id || null
+    if (next && provider !== 'all' && provider !== 'claude') setProvider('all')
+    setClaudeConfigSource(next)
+    persistConfigSource(next)
+  }
+
+  // Symmetric direction: picking a non-Claude provider while a config is
+  // scoped would hit the same CLI rejection, so drop the config scope.
+  const onProviderSelect = (value: string) => {
+    if (claudeConfigSource && value !== 'all' && value !== 'claude') {
+      setClaudeConfigSource(null)
+      persistConfigSource(null)
+    }
+    setProvider(value)
+  }
+
+  const claudeConfigs = overview.data?.claudeConfigs
   const providerOptions = [
     { value: 'all', label: 'All providers' },
     ...detectedProviders.map(entry => ({ value: entry.id, label: entry.label })),
   ]
   const providerLabel = detectedProviders.find(entry => entry.id === provider)?.label ?? providerName(provider)
-  const scope = `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · ${providerLabel}`
+  const activeConfigLabel = claudeConfigSource
+    ? claudeConfigs?.options.find(option => option.id === claudeConfigSource)?.label ?? null
+    : null
+  const scope = `${customRange ? rangeLabel(customRange) : PERIOD_LABELS[period]} · ${providerLabel}${activeConfigLabel ? ` · ${activeConfigLabel}` : ''}`
 
   return (
     <Window>
@@ -177,7 +218,7 @@ export function App() {
         {section === 'plans' ? (
           <Plans period={period} refreshToken={refreshToken} onNavigate={navigate} />
         ) : section === 'settings' ? (
-          <Settings period={period} refreshToken={refreshToken} onNavigate={navigate} initialPane={settingsPane} />
+          <Settings period={period} refreshToken={refreshToken} onNavigate={navigate} initialPane={settingsPane} claudeConfigs={claudeConfigs} claudeConfigSource={claudeConfigSource} />
         ) : (
           <>
             <TopBar
@@ -190,13 +231,16 @@ export function App() {
               provider={provider}
               providerLabel={providerLabel}
               providerOptions={providerOptions}
-              onProviderSelect={setProvider}
+              onProviderSelect={onProviderSelect}
+              claudeConfigs={claudeConfigs}
+              configSource={claudeConfigSource}
+              onConfigSelect={onConfigSelect}
             />
             <div className="body">
               {section === 'overview' ? (
                 <OverviewContent period={period} provider={provider} range={customRange} overview={overview} onNavigate={navigate} />
               ) : section === 'sessions' ? (
-                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={detectedProviders} onProviderChange={setProvider} />
+                <Sessions period={period} provider={provider} range={customRange} refreshToken={refreshToken} detectedProviders={detectedProviders} onProviderChange={onProviderSelect} />
               ) : section === 'spend' ? (
                 <SpendContent period={period} provider={provider} range={customRange} overview={overview} refreshToken={refreshToken} />
               ) : section === 'optimize' ? (

@@ -101,6 +101,19 @@ describe('Settings', () => {
     expect(document.documentElement).not.toHaveAttribute('data-theme')
   })
 
+  it('shows the active Claude config as a read-only line in General when multiple configs exist', async () => {
+    render(<Settings period="month" claudeConfigs={{ selectedId: null, options: [{ id: 'claude-config:aaaa', label: 'Default Claude', path: '/x' }, { id: 'claude-desktop:bbbb', label: 'Claude Desktop', path: '/y' }] }} claudeConfigSource="claude-desktop:bbbb" />)
+    expect(await screen.findByText('Claude config')).toBeInTheDocument()
+    expect(screen.getByText('Claude Desktop')).toBeInTheDocument()
+    expect(screen.getByText('Applies to the overview data. Manage config folders with the codeburn CLI.')).toBeInTheDocument()
+  })
+
+  it('omits the Claude config line when no multi-config selector is present', async () => {
+    render(<Settings period="month" />)
+    expect(await screen.findByRole('heading', { name: 'General' })).toBeInTheDocument()
+    expect(screen.queryByText('Claude config')).not.toBeInTheDocument()
+  })
+
   it('lists providers from the real overview payload', async () => {
     const user = userEvent.setup()
     render(<Settings period="week" />)

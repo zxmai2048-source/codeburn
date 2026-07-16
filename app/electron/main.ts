@@ -18,6 +18,10 @@ function rangeArgs(range: DateRange | undefined): string[] {
   return range ? ['--from', range.from, '--to', range.to] : []
 }
 
+function configSourceArgs(source: string | null): string[] {
+  return source ? ['--claude-config-source', source] : []
+}
+
 // Renderer-supplied strings become argv, so reject anything that could smuggle a
 // flag or shell metacharacter before it reaches the CLI. Thrown from the argv
 // builders, these surface through the same error envelope as any CliError.
@@ -44,6 +48,14 @@ function vCurrency(code: string): string {
 function vToken(value: string): string {
   if (value.startsWith('-')) throw new CliError('bad-args', 'argument must not start with "-"')
   return value
+}
+// Claude config source ids are `<kind>:<hex>` (src/providers/claude.ts) — the
+// colon is part of the real value, so the token class allows it while anchoring
+// the first char to alphanumeric so a leading "-" can never smuggle a flag.
+function vConfigSource(source: string | null | undefined): string | null {
+  if (source == null) return null
+  if (!/^[A-Za-z0-9][A-Za-z0-9:_-]*$/.test(source)) throw new CliError('bad-args', 'invalid claude config source')
+  return source
 }
 function vOutPath(outPath: string): string {
   if (outPath.startsWith('-') || !path.isAbsolute(outPath)) throw new CliError('bad-args', 'export path must be absolute')
@@ -91,8 +103,8 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
       try { return { ok: true, value: await deps.getQuota({ force: Boolean(force) }) } }
       catch (error) { return { ok: false, error: { kind: 'nonzero', message: sanitizeError(error) } } }
     },
-    'codeburn:getOverview': run((period: string, provider: string, range?: DateRange) => [
-      'status', '--format', 'menubar-json', '--period', vPeriod(period), ...providerArgs(vProvider(provider)), ...rangeArgs(vRange(range)),
+    'codeburn:getOverview': run((period: string, provider: string, range?: DateRange, configSource?: string | null) => [
+      'status', '--format', 'menubar-json', '--period', vPeriod(period), ...providerArgs(vProvider(provider)), ...rangeArgs(vRange(range)), ...configSourceArgs(vConfigSource(configSource)),
     ]),
     'codeburn:getPlans': run((period: string) => ['status', '--format', 'json', '--period', vPeriod(period)]),
     'codeburn:getActReport': run(() => ['act', 'report', '--json']),

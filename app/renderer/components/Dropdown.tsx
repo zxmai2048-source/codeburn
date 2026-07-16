@@ -10,6 +10,7 @@ export function Dropdown({
   id,
   width,
   renderIcon,
+  footer,
 }: {
   value: string
   options: DropdownOption[]
@@ -19,6 +20,8 @@ export function Dropdown({
   width?: React.CSSProperties['width']
   /** Optional leading glyph (e.g. a provider logo) shown in the trigger and each option. */
   renderIcon?: (value: string) => ReactNode
+  /** Optional non-interactive note pinned below the options in the open menu. */
+  footer?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const selectedIndex = Math.max(0, options.findIndex(option => option.value === value))
@@ -126,6 +129,7 @@ export function Dropdown({
               {option.label}
             </button>
           ))}
+          {footer && <div className="dropdown-foot">{footer}</div>}
         </div>
       )}
     </div>

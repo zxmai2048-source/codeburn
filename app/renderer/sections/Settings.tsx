@@ -9,7 +9,7 @@ import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
 import { formatConverted, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
-import type { ActionResult, AliasRow, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
+import type { ActionResult, AliasRow, ClaudeConfigSelector, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
 
 export type SettingsPane = 'general' | 'providers' | 'aliases' | 'plans' | 'devices' | 'export' | 'privacy'
 type Pane = SettingsPane
@@ -83,7 +83,7 @@ function ConfirmButton({ label, prompt, onConfirm }: { label: string; prompt: st
   )
 }
 
-export function Settings({ period, refreshToken = 0, onNavigate, initialPane }: { period: Period; refreshToken?: number; onNavigate?: (section: Section) => void; initialPane?: SettingsPane }) {
+export function Settings({ period, refreshToken = 0, onNavigate, initialPane, claudeConfigs, claudeConfigSource = null }: { period: Period; refreshToken?: number; onNavigate?: (section: Section) => void; initialPane?: SettingsPane; claudeConfigs?: ClaudeConfigSelector; claudeConfigSource?: string | null }) {
   const [pane, setPane] = useState<Pane>(initialPane ?? 'general')
 
   return (
@@ -98,7 +98,7 @@ export function Settings({ period, refreshToken = 0, onNavigate, initialPane }: 
           ))}
         </nav>
         <main className="set-pane">
-          {pane === 'general' && <GeneralPane period={period} refreshToken={refreshToken} />}
+          {pane === 'general' && <GeneralPane period={period} refreshToken={refreshToken} claudeConfigs={claudeConfigs} claudeConfigSource={claudeConfigSource} />}
           {pane === 'providers' && <ProvidersPane period={period} refreshToken={refreshToken} />}
           {pane === 'aliases' && <AliasesPane refreshToken={refreshToken} />}
           {pane === 'plans' && <PlansPane period={period} refreshToken={refreshToken} onNavigate={onNavigate} />}
@@ -112,7 +112,7 @@ export function Settings({ period, refreshToken = 0, onNavigate, initialPane }: 
   )
 }
 
-function GeneralPane({ period, refreshToken }: { period: Period; refreshToken: number }) {
+function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource }: { period: Period; refreshToken: number; claudeConfigs?: ClaudeConfigSelector; claudeConfigSource: string | null }) {
   const [currencyNonce, setCurrencyNonce] = useState(0)
   const plans = usePolled<StatusJson>(() => codeburn.getPlans(period), [period, refreshToken, currencyNonce])
   const [theme, setTheme] = useState<Theme>(() => {
@@ -137,6 +137,10 @@ function GeneralPane({ period, refreshToken }: { period: Period; refreshToken: n
   }
   const currencies = [...CURRENCIES]
   if (plans.data?.currency && !currencies.includes(plans.data.currency)) currencies.push(plans.data.currency)
+  const hasConfigs = Boolean(claudeConfigs && claudeConfigs.options.length > 0)
+  const activeConfigLabel = claudeConfigSource
+    ? claudeConfigs?.options.find(option => option.id === claudeConfigSource)?.label ?? claudeConfigSource
+    : 'All Claude configs'
 
   return (
     <section className="set-p on">
@@ -148,6 +152,12 @@ function GeneralPane({ period, refreshToken }: { period: Period; refreshToken: n
             {(['system', 'light', 'dark'] as Theme[]).map(value => <button key={value} className={theme === value ? 'on' : undefined} aria-pressed={theme === value} onClick={() => chooseTheme(value)}>{value[0]!.toUpperCase() + value.slice(1)}</button>)}
           </span></span></div>
         </div>
+        {hasConfigs && (
+          <div className="about-sec">
+            <div className="about-sec-h">Claude config</div>
+            <div className="about-row"><span className="tx">Active config<small>Applies to the overview data. Manage config folders with the codeburn CLI.</small></span><span className="r"><span className="set-cap">{activeConfigLabel}</span></span></div>
+          </div>
+        )}
         <div className="about-sec set-last-sec">
           <div className="about-sec-h">Display</div>
           <div className="about-row"><label className="tx" htmlFor="settings-currency">Currency</label><span className="r">

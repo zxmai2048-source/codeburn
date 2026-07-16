@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-import type { DateRange } from '../lib/types'
+import type { ClaudeConfigSelector, DateRange } from '../lib/types'
+import { Dropdown } from './Dropdown'
 import { ProviderPop, type ProviderOption } from './ProviderPop'
 import { RangeCalendar } from './RangeCalendar'
 import { SegTabs, type SegOption } from './SegTabs'
+
+/** Sentinel option value: no --claude-config-source flag (aggregate all configs). */
+const ALL_CONFIGS = ''
 
 /** The real CLI period vocabulary (`codeburn ... --period`). */
 export const PERIOD_OPTIONS: SegOption[] = [
@@ -26,6 +30,9 @@ export function TopBar({
   providerLabel,
   providerOptions,
   onProviderSelect,
+  claudeConfigs,
+  configSource,
+  onConfigSelect,
 }: {
   title: ReactNode
   scope?: ReactNode
@@ -37,6 +44,9 @@ export function TopBar({
   providerLabel: string
   providerOptions: ProviderOption[]
   onProviderSelect: (value: string) => void
+  claudeConfigs?: ClaudeConfigSelector
+  configSource: string | null
+  onConfigSelect: (id: string) => void
 }) {
   return (
     <div className="bar">
@@ -46,7 +56,28 @@ export function TopBar({
       <SegTabs options={PERIOD_OPTIONS} value={customRange ? '' : period} onChange={onPeriodChange} />
       <CalendarPop value={customRange} onSelect={onRangeSelect} />
       <ProviderPop value={provider} label={providerLabel} options={providerOptions} onSelect={onProviderSelect} />
+      {claudeConfigs && <ConfigPicker configs={claudeConfigs} value={configSource} onSelect={onConfigSelect} />}
     </div>
+  )
+}
+
+/** Claude config source switcher. Only getOverview honors the selection, so the
+ * footer names the limit; the active label is also echoed in the scope line. */
+function ConfigPicker({ configs, value, onSelect }: { configs: ClaudeConfigSelector; value: string | null; onSelect: (id: string) => void }) {
+  const options = [
+    { value: ALL_CONFIGS, label: 'All Claude configs' },
+    ...configs.options.map(option => ({ value: option.id, label: option.label })),
+  ]
+  return (
+    <Dropdown
+      id="claude-config-select"
+      ariaLabel="Claude config source"
+      value={value ?? ALL_CONFIGS}
+      options={options}
+      onChange={onSelect}
+      width={168}
+      footer="Applies to the overview data. Manage config folders with the codeburn CLI."
+    />
   )
 }
 

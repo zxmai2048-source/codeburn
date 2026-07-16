@@ -490,7 +490,7 @@ export type CompareJsonReport = {
 
 export interface CodeburnBridge {
   getQuota(force?: boolean): Promise<QuotaProvider[]>
-  getOverview(period: Period, provider: string, range?: DateRange): Promise<MenubarPayload>
+  getOverview(period: Period, provider: string, range?: DateRange, configSource?: string | null): Promise<MenubarPayload>
   getPlans(period: Period): Promise<StatusJson>
   getActReport(): Promise<ActReportJson>
   readonly platform: string
