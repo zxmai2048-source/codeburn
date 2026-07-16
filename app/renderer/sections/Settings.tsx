@@ -7,6 +7,7 @@ import { Panel } from '../components/Panel'
 import { ProviderLogo } from '../components/ProviderLogo'
 import type { Section } from '../components/Sidebar'
 import { usePolled } from '../hooks/usePolled'
+import { readDailyBudget } from '../lib/budget'
 import { formatConverted, formatUsd } from '../lib/format'
 import { codeburn } from '../lib/ipc'
 import type { ActionResult, AliasRow, ClaudeConfigSelector, CliError, CombinedUsage, DeviceScanResult, Identity, JsonPlanSummary, MenubarPayload, Period, PlanId, PlanProvider, ShareStatus, StatusJson } from '../lib/types'
@@ -120,12 +121,26 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource }
     return saved === 'light' || saved === 'dark' ? saved : 'system'
   })
   const [defaultPeriod, setDefaultPeriod] = useState(() => readSetting('codeburn.defaultPeriod') ?? 'today')
+  const [budgetKind, setBudgetKind] = useState<'off' | 'usd' | 'tokens'>(() => readDailyBudget()?.kind ?? 'off')
+  const [budgetInput, setBudgetInput] = useState(() => { const budget = readDailyBudget(); return budget ? String(budget.value) : '' })
+  const [budgetError, setBudgetError] = useState('')
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
 
   useEffect(() => {
     if (theme === 'system') document.documentElement.removeAttribute('data-theme')
     else document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  // Store on change; a positive finite amount persists, anything else clears the
+  // cap (so the banner turns off) and, when non-empty, flags a validation error.
+  const persistBudget = (kind: 'off' | 'usd' | 'tokens', input: string) => {
+    const trimmed = input.trim()
+    if (kind === 'off' || trimmed === '') { setBudgetError(''); writeSetting('codeburn.dailyBudget', ''); return }
+    const value = Number(trimmed)
+    if (!Number.isFinite(value) || value <= 0) { setBudgetError('Enter a positive number.'); return }
+    setBudgetError('')
+    writeSetting('codeburn.dailyBudget', JSON.stringify({ kind, value }))
+  }
 
   const chooseTheme = (next: Theme) => {
     setTheme(next)
@@ -165,6 +180,8 @@ function GeneralPane({ period, refreshToken, claudeConfigs, claudeConfigSource }
             <button className="set-text-button" onClick={() => void codeburn.resetCurrency().then(finishCurrency)}>Reset to USD</button>
           </span></div>
           <div className="about-row"><label className="tx" htmlFor="settings-period">Default period<small>Applied on next launch.</small></label><span className="r"><Dropdown id="settings-period" ariaLabel="Default period" value={defaultPeriod} options={[{ value: 'today', label: 'Today' }, { value: 'week', label: '7d' }, { value: '30days', label: '30d' }, { value: 'month', label: 'Month' }, { value: 'all', label: 'All' }]} onChange={value => { setDefaultPeriod(value); writeSetting('codeburn.defaultPeriod', value) }} width={92} /></span></div>
+          <div className="about-row"><label className="tx" htmlFor="settings-budget">Daily budget<small>Warns at 80%, alerts at 100%.</small></label><span className="r"><Dropdown id="settings-budget" ariaLabel="Daily budget" value={budgetKind} options={[{ value: 'off', label: 'Off' }, { value: 'usd', label: 'USD amount' }, { value: 'tokens', label: 'Tokens' }]} onChange={value => { const kind = value as 'off' | 'usd' | 'tokens'; setBudgetKind(kind); persistBudget(kind, budgetInput) }} width={120} />{budgetKind !== 'off' && <input className="set-input" type="text" inputMode="decimal" aria-label="Daily budget amount" placeholder={budgetKind === 'usd' ? 'USD' : 'tokens'} value={budgetInput} onChange={event => { setBudgetInput(event.target.value); persistBudget(budgetKind, event.target.value) }} style={{ width: 90 }} />}</span></div>
+          {budgetError && <p className="set-action-msg error">{budgetError}</p>}
           {message && <p className={message.error ? 'set-action-msg error' : 'set-action-msg'}>{message.text}</p>}
         </div>
       </div>

@@ -114,6 +114,25 @@ describe('Settings', () => {
     expect(screen.queryByText('Claude config')).not.toBeInTheDocument()
   })
 
+  it('stores a positive daily budget from General', async () => {
+    const user = userEvent.setup()
+    render(<Settings period="month" />)
+    await user.click(screen.getByLabelText('Daily budget'))
+    await user.click(screen.getByRole('option', { name: 'USD amount' }))
+    await user.type(screen.getByLabelText('Daily budget amount'), '25')
+    expect(JSON.parse(localStorage.getItem('codeburn.dailyBudget')!)).toEqual({ kind: 'usd', value: 25 })
+  })
+
+  it('rejects a non-positive daily budget without persisting it', async () => {
+    const user = userEvent.setup()
+    render(<Settings period="month" />)
+    await user.click(screen.getByLabelText('Daily budget'))
+    await user.click(screen.getByRole('option', { name: 'Tokens' }))
+    await user.type(screen.getByLabelText('Daily budget amount'), '-5')
+    expect(screen.getByText('Enter a positive number.')).toBeInTheDocument()
+    expect(localStorage.getItem('codeburn.dailyBudget')).toBeFalsy()
+  })
+
   it('lists providers from the real overview payload', async () => {
     const user = userEvent.setup()
     render(<Settings period="week" />)

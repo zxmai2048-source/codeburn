@@ -8,8 +8,10 @@ import { Sidebar, type Section } from './components/Sidebar'
 import { rangeLabel, TopBar } from './components/TopBar'
 import { Window } from './components/Window'
 import { usePolled } from './hooks/usePolled'
-import { formatUsd, setActiveCurrency } from './lib/format'
+import { readDailyBudget } from './lib/budget'
+import { formatCompact, formatUsd, setActiveCurrency } from './lib/format'
 import { codeburn } from './lib/ipc'
+import { localDateKey } from './lib/period'
 import { OverviewContent } from './sections/Overview'
 import { OptimizeContent } from './sections/Optimize'
 import { Models } from './sections/Models'
@@ -214,6 +216,7 @@ export function App() {
     <Window>
       <Sidebar active={section} onNavigate={navigate} status={<StatusLine polled={overview} />} />
       <div className="ct">
+        <DailyBudgetBanner payload={overview.data ?? null} provider={provider} />
         <ErrorBoundary key={section}>
         {section === 'plans' ? (
           <Plans period={period} refreshToken={refreshToken} onNavigate={navigate} />
@@ -289,5 +292,66 @@ function SectionPlaceholder({ title }: { title: string }) {
     <Panel title={title}>
       <EmptyNote>{title} lands in a later task. The shell, data bridge, and design system are in place.</EmptyNote>
     </Panel>
+  )
+}
+
+/** App-wide daily-budget alert: reads today's usage from the overview payload and
+ * warns at >=80% / alerts at >=100% of the configured cap. Dismissible per day. */
+function DailyBudgetBanner({ payload, provider }: { payload: MenubarPayload | null; provider: string }) {
+  const [, bumpDismiss] = useState(0)
+  const budget = readDailyBudget()
+  if (!budget || !payload) return null
+
+  // Token totals in history.daily are zeroed under a specific-provider filter
+  // (only cost is per-provider), so a token cap can only be evaluated honestly on
+  // the all-providers view; otherwise we'd compare usage against a false zero.
+  if (budget.kind === 'tokens' && provider !== 'all') return null
+
+  const todayKey = localDateKey(new Date())
+  let dismissed: string | null = null
+  try { dismissed = globalThis.localStorage?.getItem('codeburn.dailyBudget.dismissed') ?? null } catch { /* storage can be unavailable */ }
+  if (dismissed === todayKey) return null
+
+  // Today's entry may be absent when there has been no activity yet: that's 0 used.
+  const entry = payload.history.daily.find(day => day.date === todayKey)
+  const used = budget.kind === 'usd'
+    ? entry?.cost ?? 0
+    : entry ? entry.inputTokens + entry.outputTokens : 0
+  const percent = (used / budget.value) * 100
+  if (percent < 80) return null
+
+  const exceeded = percent >= 100
+  const accent = exceeded ? 'var(--bad)' : 'var(--warn)'
+  const spent = budget.kind === 'usd' ? formatUsd(used) : formatCompact(used)
+  const cap = budget.kind === 'usd' ? formatUsd(budget.value) : formatCompact(budget.value)
+  const text = exceeded
+    ? `Daily budget exceeded: ${spent} of ${cap}`
+    : `Today's spend is at ${Math.floor(percent)}% of your daily budget`
+
+  const dismiss = () => {
+    try { globalThis.localStorage?.setItem('codeburn.dailyBudget.dismissed', todayKey) } catch { /* storage can be unavailable */ }
+    bumpDismiss(tick => tick + 1)
+  }
+
+  return (
+    <div
+      role="status"
+      className="daily-budget-banner"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '6px 16px',
+        fontSize: 12,
+        fontWeight: 550,
+        color: accent,
+        borderLeft: `3px solid ${accent}`,
+        borderBottom: '1px solid var(--line)',
+        lineHeight: 1.4,
+      }}
+    >
+      <span style={{ flex: 1 }}>{text}</span>
+      <button type="button" className="set-text-button" style={{ color: 'var(--mut)' }} onClick={dismiss}>Dismiss</button>
+    </div>
   )
 }

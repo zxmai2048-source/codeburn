@@ -356,4 +356,51 @@ describe('App shortcuts', () => {
     expect(screen.getByRole('button', { name: /–/ })).toBeInTheDocument()
     expect(screen.getByText('30D')).not.toHaveClass('on')
   })
+
+  it('shows no daily budget banner when none is configured', async () => {
+    render(<App />)
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+    expect(screen.queryByText(/daily budget/i)).not.toBeInTheDocument()
+  })
+
+  it('shows no banner when today spend is under 80% of the budget', async () => {
+    localStorage.setItem('codeburn.dailyBudget', JSON.stringify({ kind: 'usd', value: 100 }))
+    render(<App />)
+    expect(await screen.findByText('Most expensive sessions')).toBeInTheDocument()
+    expect(screen.queryByText(/daily budget/i)).not.toBeInTheDocument()
+  })
+
+  it('warns when today spend reaches 80% of the daily budget', async () => {
+    localStorage.setItem('codeburn.dailyBudget', JSON.stringify({ kind: 'usd', value: 14 }))
+    render(<App />)
+    // 12.34 / 14 = 88.1% → warning band
+    expect(await screen.findByText("Today's spend is at 88% of your daily budget")).toBeInTheDocument()
+  })
+
+  it('alerts and dismisses for the rest of the day when the budget is exceeded', async () => {
+    localStorage.setItem('codeburn.dailyBudget', JSON.stringify({ kind: 'usd', value: 10 }))
+    render(<App />)
+    expect(await screen.findByText('Daily budget exceeded: $12.34 of $10.00')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByText(/Daily budget exceeded/)).not.toBeInTheDocument())
+    expect(localStorage.getItem('codeburn.dailyBudget.dismissed')).toBe(dateKey(new Date()))
+  })
+
+  it('evaluates a token budget only on the all-providers view', async () => {
+    const payload = overviewPayload()
+    payload.history.daily[0]!.inputTokens = 60_000
+    payload.history.daily[0]!.outputTokens = 40_000
+    mocks.getOverview.mockResolvedValue(payload)
+    localStorage.setItem('codeburn.dailyBudget', JSON.stringify({ kind: 'tokens', value: 90_000 }))
+    render(<App />)
+    expect(await screen.findByText('Daily budget exceeded: 100K of 90K')).toBeInTheDocument()
+
+    // A specific-provider filter zeroes history.daily token fields, so the token
+    // cap can no longer be evaluated: the banner must disappear.
+    fireEvent.click(screen.getByText('All providers'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Claude' }))
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('30days', 'claude'))
+    await waitFor(() => expect(screen.queryByText(/Daily budget exceeded/)).not.toBeInTheDocument())
+  })
 })
