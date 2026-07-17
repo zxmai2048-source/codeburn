@@ -140,6 +140,26 @@ function toEnvelopeError(err: unknown): { kind: string; message: string } {
   return { kind: 'nonzero', message: sanitizeError(err instanceof Error ? err.message : String(err)) }
 }
 
+/**
+ * Props for a `cli_error` telemetry event. Deliberately carries only
+ * non-sensitive enums so the event is diagnosable without a repro yet leaks
+ * nothing: `cmd` is the CLI subcommand (argv[0], a fixed literal like 'status'/
+ * 'sessions' — never the full args, which can hold paths), and `detail` is the
+ * not-found resolution/spawn stage. The error's `message` (which may contain a
+ * path or stderr) is never read here — only `kind` and the stage enum are.
+ */
+function cliErrorProps(err: unknown, cmd: string | undefined): Record<string, unknown> {
+  const props: Record<string, unknown> = {}
+  if (cmd) props.cmd = cmd
+  if (err instanceof CliError) {
+    props.kind = err.kind
+    if (err.kind === 'not-found' && err.detail) props.detail = err.detail
+  } else {
+    props.kind = 'nonzero'
+  }
+  return props
+}
+
 type Deps = {
   spawnCli: (args: string[], opts?: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv }) => Promise<unknown>
   spawnCliAction: (args: string[], opts?: { timeoutMs?: number }) => Promise<ActionResult>
@@ -181,11 +201,14 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
   }
 
   const run = (build: (...args: any[]) => string[]): Handler => async (...args: any[]) => {
+    let cmd: string | undefined
     try {
-      return { ok: true, value: await deps.spawnCli(build(...args)) }
+      const argv = build(...args)
+      cmd = argv[0]
+      return { ok: true, value: await deps.spawnCli(argv) }
     } catch (err) {
       const error = toEnvelopeError(err)
-      telemetry?.track('cli_error', { kind: error.kind })
+      telemetry?.track('cli_error', cliErrorProps(err, cmd))
       return { ok: false, error }
     }
   }
@@ -215,7 +238,7 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
     } catch (err) {
       const error = toEnvelopeError(err)
       if (!overviewWarmed) emitColdStart(error.kind === 'timeout')
-      telemetry?.track('cli_error', { kind: error.kind })
+      telemetry?.track('cli_error', cliErrorProps(err, 'status'))
       return { ok: false, error }
     }
   }

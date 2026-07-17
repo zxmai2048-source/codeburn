@@ -2,9 +2,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, isAbsolute, relative, win32, posix } from 'node:path'
 
-import { spawnCli, spawnCliAction, spawnEnvFor, spawnSpecFor, killAll, CliError, nodeManagerDirs, resolveCodeburnPath, resolveTarget } from './cli'
+import { spawnCli, spawnCliAction, spawnEnvFor, spawnSpecFor, killAll, CliError, nodeManagerDirs, notFoundStage, resolveCodeburnPath, resolveTarget } from './cli'
 
 let dir: string
 const originalBin = process.env.CODEBURN_BIN
@@ -135,6 +135,103 @@ describe('resolveTarget (bundled CLI in the packaged app)', () => {
 
     expect(resolveTarget()).toBeNull()
     expect(resolveCodeburnPath()).toBeNull()
+  })
+
+  // The Windows P0: the packaged app set CODEBURN_BUNDLED_CLI to a C:\ path, but
+  // the guard was `startsWith('/')` (POSIX-only), so the bundled CLI was skipped
+  // and resolution fell through to a PATH search that finds nothing → not-found
+  // on 100% of Windows installs. The guard is now `path.isAbsolute`, which is
+  // the platform variant (win32 on Windows). These tests pin both the intent
+  // (relative paths are still rejected as a safety guard) and the Windows fix.
+  it('resolves an absolute CODEBURN_BUNDLED_CLI (as the packaged app sets it)', () => {
+    delete process.env.CODEBURN_BIN
+    delete process.env.VITE_DEV_SERVER_URL
+    process.env.CODEBURN_PATH_DIRS = ''
+    process.env.CODEBURN_CLI_PATH_FILE = join(dir, 'no-persisted-path')
+    const entry = bundledEntry('launch.js')
+    expect(isAbsolute(entry)).toBe(true)
+    process.env.CODEBURN_BUNDLED_CLI = entry
+    expect(resolveTarget()).toEqual({ kind: 'bundled', entry })
+  })
+
+  it('rejects a relative CODEBURN_BUNDLED_CLI even when the file exists (guards relative injection)', () => {
+    delete process.env.CODEBURN_BIN
+    delete process.env.VITE_DEV_SERVER_URL
+    process.env.CODEBURN_PATH_DIRS = ''
+    process.env.CODEBURN_CLI_PATH_FILE = join(dir, 'no-persisted-path')
+    const entry = bundledEntry('rel-launch.js')
+    const rel = relative(process.cwd(), entry) // resolvable via cwd, but NOT absolute
+    expect(isAbsolute(rel)).toBe(false)
+    process.env.CODEBURN_BUNDLED_CLI = rel
+    // File exists (isFile true), so only the isAbsolute guard can reject it.
+    expect(resolveTarget()).toBeNull()
+  })
+
+  it('rejects a relative CODEBURN_BIN override even when the file exists', () => {
+    delete process.env.VITE_DEV_SERVER_URL
+    process.env.CODEBURN_PATH_DIRS = ''
+    process.env.CODEBURN_CLI_PATH_FILE = join(dir, 'no-persisted-path')
+    delete process.env.CODEBURN_BUNDLED_CLI
+    const bin = join(dir, 'rel-codeburn.js')
+    writeFileSync(bin, '#!/usr/bin/env node\n', { mode: 0o755 })
+    chmodSync(bin, 0o755)
+    const rel = relative(process.cwd(), bin)
+    expect(isAbsolute(rel)).toBe(false)
+    process.env.CODEBURN_BIN = rel
+    expect(resolveTarget()).toBeNull()
+  })
+})
+
+describe('absolute-path guard is cross-platform (path.isAbsolute, not startsWith("/"))', () => {
+  // On the POSIX CI host `isAbsolute` is path.posix.isAbsolute, so these assert
+  // the per-platform variants directly to encode the Windows intent regardless
+  // of where the suite runs.
+  const winPath = 'C:\\Users\\x\\resources\\cli\\dist\\launch.js'
+
+  it('accepts a Windows absolute bundled path where the old startsWith("/") guard rejected it', () => {
+    expect(winPath.startsWith('/')).toBe(false)          // old guard: dropped it → the P0
+    expect(win32.isAbsolute(winPath)).toBe(true)          // new guard on Windows: accepted
+    expect(win32.isAbsolute('cli\\dist\\launch.js')).toBe(false) // relative still rejected
+  })
+
+  it('accepts a POSIX absolute path and rejects a relative one (macOS/Linux unchanged)', () => {
+    expect(posix.isAbsolute('/res/cli/dist/launch.js')).toBe(true)
+    expect(posix.isAbsolute('cli/dist/launch.js')).toBe(false)
+  })
+})
+
+describe('notFoundStage (non-sensitive telemetry enum for a not-found)', () => {
+  it('reports bundled-not-absolute for a relative CODEBURN_BUNDLED_CLI', () => {
+    delete process.env.CODEBURN_BIN
+    process.env.CODEBURN_BUNDLED_CLI = 'cli/dist/launch.js'
+    expect(notFoundStage()).toBe('bundled-not-absolute')
+  })
+
+  it('reports bundled-missing for an absolute CODEBURN_BUNDLED_CLI whose file is absent', () => {
+    delete process.env.CODEBURN_BIN
+    process.env.CODEBURN_BUNDLED_CLI = join(dir, 'nope', 'cli.js')
+    expect(notFoundStage()).toBe('bundled-missing')
+  })
+
+  it('reports bin-not-absolute for a relative CODEBURN_BIN override', () => {
+    process.env.CODEBURN_BIN = 'relative/codeburn'
+    delete process.env.CODEBURN_BUNDLED_CLI
+    expect(notFoundStage()).toBe('bin-not-absolute')
+  })
+
+  it('reports no-path-match when nothing is configured', () => {
+    delete process.env.CODEBURN_BIN
+    delete process.env.CODEBURN_BUNDLED_CLI
+    expect(notFoundStage()).toBe('no-path-match')
+  })
+
+  it('spawnCli rejects not-found carrying the resolution stage as detail', async () => {
+    delete process.env.CODEBURN_BIN
+    delete process.env.VITE_DEV_SERVER_URL
+    process.env.CODEBURN_PATH_DIRS = ''
+    process.env.CODEBURN_CLI_PATH_FILE = join(dir, 'no-persisted-path')
+    process.env.CODEBURN_BUNDLED_CLI = 'cli/dist/launch.js' // relative → bundled-not-absolute
+    await expect(spawnCli(['status'])).rejects.toMatchObject({ kind: 'not-found', detail: 'bundled-not-absolute' })
   })
 })
 

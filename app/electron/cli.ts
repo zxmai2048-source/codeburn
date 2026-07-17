@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join } from 'node:path'
 
 // Runs entirely in the Electron main process. This module must NOT import
 // `electron` so it stays unit-testable in a plain node environment.
@@ -19,13 +19,29 @@ export type ActionResult = { ok: boolean; stdout: string; stderr: string; code: 
 export type CliTarget = { kind: 'external'; bin: string } | { kind: 'bundled'; entry: string }
 type SpawnSpec = { bin: string; args: string[]; env: NodeJS.ProcessEnv }
 
+/**
+ * Which resolution/spawn stage produced a `not-found`, as a non-sensitive enum
+ * for telemetry. Never contains a path — just names what was missing so a
+ * not-found is self-diagnosing without a repro. See {@link notFoundStage}.
+ */
+export type NotFoundStage =
+  | 'bin-not-absolute'
+  | 'bin-not-executable'
+  | 'bundled-not-absolute'
+  | 'bundled-missing'
+  | 'spawn-error'
+  | 'no-path-match'
+
 /** Structured failure so the renderer can pick the right empty/permission state. */
 export class CliError extends Error {
   readonly kind: CliErrorKind
-  constructor(kind: CliErrorKind, message: string) {
+  /** For `not-found` only: the non-sensitive stage enum. Undefined otherwise. */
+  readonly detail?: NotFoundStage
+  constructor(kind: CliErrorKind, message: string, detail?: NotFoundStage) {
     super(message)
     this.name = 'CliError'
     this.kind = kind
+    this.detail = detail
   }
 }
 
@@ -157,7 +173,7 @@ function readPersistedPath(): string | null {
     const file = persistedPathFile()
     if (!existsSync(file)) return null
     const value = readFileSync(file, 'utf-8').trim()
-    if (value && value.startsWith('/') && isExecutableFile(value)) return value
+    if (value && isAbsolute(value) && isExecutableFile(value)) return value
   } catch {
     // unreadable — fall through to PATH search
   }
@@ -181,7 +197,7 @@ function readPersistedPath(): string | null {
  */
 export function resolveTarget(): CliTarget | null {
   const override = process.env.CODEBURN_BIN
-  if (override && override.startsWith('/') && isExecutableFile(override)) return { kind: 'external', bin: override }
+  if (override && isAbsolute(override) && isExecutableFile(override)) return { kind: 'external', bin: override }
 
   // Dev convenience: when launched by the Vite dev server, prefer the repo's own
   // freshly-built CLI over a stale globally-installed/persisted one, so
@@ -199,7 +215,7 @@ export function resolveTarget(): CliTarget | null {
   // It is passed as an argument to Electron-as-node, so it only needs to be a
   // readable file — no exec bit or working shebang required.
   const bundled = process.env.CODEBURN_BUNDLED_CLI
-  if (bundled && bundled.startsWith('/') && isFile(bundled)) return { kind: 'bundled', entry: bundled }
+  if (bundled && isAbsolute(bundled) && isFile(bundled)) return { kind: 'bundled', entry: bundled }
 
   const persisted = readPersistedPath()
   if (persisted) return { kind: 'external', bin: persisted }
@@ -215,6 +231,27 @@ export function resolveCodeburnPath(): string | null {
   const target = resolveTarget()
   if (!target) return null
   return target.kind === 'bundled' ? target.entry : target.bin
+}
+
+/**
+ * Why {@link resolveTarget} found nothing, recomputed from env as a
+ * non-sensitive enum for telemetry. Mirrors resolveTarget's order and reports
+ * the first stage that disqualified a candidate (e.g. a bundled path that isn't
+ * absolute — the Windows P0 — vs. one that's absolute but missing, vs. no PATH
+ * match at all). Only enum strings escape here: never a path, arg, or message.
+ */
+export function notFoundStage(): NotFoundStage {
+  const override = process.env.CODEBURN_BIN
+  if (override) {
+    if (!isAbsolute(override)) return 'bin-not-absolute'
+    if (!isExecutableFile(override)) return 'bin-not-executable'
+  }
+  const bundled = process.env.CODEBURN_BUNDLED_CLI
+  if (bundled) {
+    if (!isAbsolute(bundled)) return 'bundled-not-absolute'
+    if (!isFile(bundled)) return 'bundled-missing'
+  }
+  return 'no-path-match'
 }
 
 function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number, onStderr?: (chunk: string) => void): Promise<unknown> {
@@ -261,7 +298,7 @@ function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number, onStderr?:
     })
 
     child.on('error', err => {
-      finish(() => reject(new CliError('not-found', err.message)))
+      finish(() => reject(new CliError('not-found', err.message, 'spawn-error')))
     })
 
     child.on('close', code => {
@@ -297,7 +334,7 @@ export function spawnCli(
   opts: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv } = {},
 ): Promise<unknown> {
   const target = resolveTarget()
-  if (!target) return Promise.reject(new CliError('not-found', 'codeburn CLI not found'))
+  if (!target) return Promise.reject(new CliError('not-found', 'codeburn CLI not found', notFoundStage()))
   const spec = spawnSpecFor(target, args)
   if (opts.extraEnv) spec.env = { ...spec.env, ...opts.extraEnv }
 

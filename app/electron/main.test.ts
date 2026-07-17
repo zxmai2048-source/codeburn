@@ -428,7 +428,7 @@ describe('createBridgeHandlers (telemetry wiring)', () => {
     expect(coldStarts[0]![1]).toMatchObject({ timedOut: true })
   })
 
-  it('tracks cli_error kinds from failing handlers', async () => {
+  it('tracks cli_error with the failing kind and the CLI subcommand (cmd = argv[0])', async () => {
     const telemetry = fakeTelemetry()
     const failing = {
       ...deps(telemetry),
@@ -436,6 +436,35 @@ describe('createBridgeHandlers (telemetry wiring)', () => {
     }
     const handlers = createBridgeHandlers(failing)
     await handlers['codeburn:getSessions']!('week', 'all')
-    expect(telemetry.track).toHaveBeenCalledWith('cli_error', { kind: 'timeout' })
+    expect(telemetry.track).toHaveBeenCalledWith('cli_error', { cmd: 'sessions', kind: 'timeout' })
+  })
+
+  it('includes the resolution-stage detail for a not-found (self-diagnosing without a repro)', async () => {
+    const telemetry = fakeTelemetry()
+    const failing = {
+      ...deps(telemetry),
+      // Mirrors the Windows P0: bundled path present but rejected by the resolver.
+      spawnCli: vi.fn(async () => { throw new CliError('not-found', 'codeburn CLI not found', 'bundled-not-absolute') }),
+    }
+    const handlers = createBridgeHandlers(failing)
+    await handlers['codeburn:getPlans']!('week')
+    expect(telemetry.track).toHaveBeenCalledWith('cli_error', { cmd: 'status', kind: 'not-found', detail: 'bundled-not-absolute' })
+  })
+
+  it('never leaks a path or message into cli_error telemetry, even when the error carries one', async () => {
+    const telemetry = fakeTelemetry()
+    const failing = {
+      ...deps(telemetry),
+      // A spawn-time ENOENT whose message embeds a filesystem path.
+      spawnCli: vi.fn(async () => {
+        throw new CliError('not-found', 'spawn C:\\Users\\alice\\secret\\codeburn.exe ENOENT', 'spawn-error')
+      }),
+    }
+    const handlers = createBridgeHandlers(failing)
+    await handlers['codeburn:getSessions']!('week', 'all')
+    const props = telemetry.track.mock.calls.find(([name]) => name === 'cli_error')![1] as Record<string, unknown>
+    expect(props).toEqual({ cmd: 'sessions', kind: 'not-found', detail: 'spawn-error' })
+    expect(JSON.stringify(props)).not.toContain('secret')
+    expect(JSON.stringify(props)).not.toContain('C:\\')
   })
 })
