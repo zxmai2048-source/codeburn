@@ -920,5 +920,9 @@ export function getShortModelName(model: string): string {
     // fall through to its raw id rather than show a wrong name/tier.
     if (canonical === key || canonical.startsWith(key + '-')) return name
   }
+  // getCanonicalName only strips the leading provider prefix, so a raw
+  // path-style id (e.g. fireworks/routers/glm-fast-latest) still has slashes
+  // here. Fall back to the last path segment rather than showing the path.
+  if (canonical.includes('/')) return canonical.slice(canonical.lastIndexOf('/') + 1)
   return canonical
 }

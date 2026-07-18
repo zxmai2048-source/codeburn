@@ -260,6 +260,18 @@ function parseAntigravityServerCandidates(lines: string[]): ServerCandidate[] {
     .filter((server): server is ServerCandidate => server !== null)
 }
 
+// Antigravity's own model-map config sometimes hasn't caught up with a new
+// model yet, so both the config key and displayName can still be the raw
+// placeholder id (e.g. "MODEL_PLACEHOLDER_M26"). Falling through to that
+// value as the "canonical" model would leak an internal placeholder as a
+// model name; 'unknown' is what this file already uses when no model can be
+// resolved at all (see antigravitySqliteModel).
+const MODEL_PLACEHOLDER_PATTERN = /^MODEL_PLACEHOLDER_/
+
+function dropPlaceholderModelId(model: string): string {
+  return MODEL_PLACEHOLDER_PATTERN.test(model) ? 'unknown' : model
+}
+
 function getCanonicalModelId(key: string, displayName?: string): string {
   if (displayName) {
     const lower = displayName.toLowerCase()
@@ -286,7 +298,7 @@ function getCanonicalModelId(key: string, displayName?: string): string {
       return 'gemini-3-pro'
     }
   }
-  return key
+  return dropPlaceholderModelId(key)
 }
 
 export function extractAntigravityModelMap(resp: unknown): ModelMap {
@@ -880,7 +892,7 @@ function buildCallsFromGeneratorMetadata(
     const responseId = usage.responseId || String(i)
     const dedupKey = `antigravity:${cascadeId}:${responseId}`
 
-    const model = modelMap[usage.model] ?? usage.model
+    const model = dropPlaceholderModelId(modelMap[usage.model] ?? usage.model)
     const pricingModel = normalizePricingModel(model)
     const timestamp = entry.chatModel?.chatStartMetadata?.createdAt ?? ''
     const costUSD = calculateCost(pricingModel, inputTokens, responseTokens + thinkingTokens, 0, 0, 0)
