@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 
 // Stub electron so importing main.ts does not require an Electron runtime.
@@ -11,8 +14,9 @@ vi.mock('electron', () => ({
   shell: { openExternal: vi.fn() },
 }))
 
-import { createApplicationMenuTemplate, createBridgeHandlers } from './main'
+import { createApplicationMenuTemplate, createBeforeQuitHandler, createBridgeHandlers } from './main'
 import { CliError } from './cli'
+import { Telemetry } from './telemetry'
 
 function fakeSpawn(result: unknown = { current: { cost: 12.34 } }) {
   const calls: string[][] = []
@@ -271,6 +275,137 @@ describe('createApplicationMenuTemplate', () => {
     expect(roles).toContain('toggleDevTools')
     expect(roles).not.toContain('reload')
     expect(roles).not.toContain('forceReload')
+  })
+})
+
+describe('createBeforeQuitHandler', () => {
+  it('flushes app_close to a fast endpoint before allowing quit', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'cb-main-quit-'))
+    try {
+      const posts: Array<{ events: Array<{ name: string }> }> = []
+      const fetchFn = vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+        posts.push(JSON.parse(String(init?.body)) as { events: Array<{ name: string }> })
+        return { ok: true } as Response
+      }) as unknown as typeof fetch
+      const telemetry = new Telemetry({ stateDir, country: 'US', isPackaged: true, appVersion: '1', fetchFn })
+      telemetry.completeOnboarding(true)
+      await telemetry.flush() // isolate the final beat from the onboarding app_open
+      posts.length = 0
+
+      const quit = vi.fn()
+      const killChildren = vi.fn()
+      const handler = createBeforeQuitHandler({ getTelemetry: () => telemetry, killAll: killChildren, quit })
+      const firstEvent = { preventDefault: vi.fn() }
+      handler(firstEvent)
+
+      expect(firstEvent.preventDefault).toHaveBeenCalledOnce()
+      await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+      expect(killChildren).toHaveBeenCalledOnce()
+      expect(posts).toHaveLength(1)
+      expect(posts[0]!.events.map(event => event.name)).toContain('app_close')
+
+      const finalEvent = { preventDefault: vi.fn() }
+      handler(finalEvent)
+      expect(finalEvent.preventDefault).not.toHaveBeenCalled()
+      expect(quit).toHaveBeenCalledOnce()
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows quit at 1500ms when the endpoint never resolves and does not re-enter', async () => {
+    vi.useFakeTimers()
+    try {
+      const trackClose = vi.fn()
+      const flush = vi.fn(() => new Promise<boolean>(() => {}))
+      const quit = vi.fn()
+      const handler = createBeforeQuitHandler({
+        getTelemetry: () => ({ trackClose, flush }),
+        killAll: vi.fn(),
+        quit,
+      })
+
+      const firstEvent = { preventDefault: vi.fn() }
+      handler(firstEvent)
+      const repeatedEvent = { preventDefault: vi.fn() }
+      handler(repeatedEvent)
+
+      expect(firstEvent.preventDefault).toHaveBeenCalledOnce()
+      expect(repeatedEvent.preventDefault).toHaveBeenCalledOnce()
+      expect(trackClose).toHaveBeenCalledOnce()
+      expect(flush).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1499)
+      expect(quit).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(quit).toHaveBeenCalledOnce()
+
+      const finalEvent = { preventDefault: vi.fn() }
+      handler(finalEvent)
+      expect(finalEvent.preventDefault).not.toHaveBeenCalled()
+      expect(quit).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still flushes and quits when trackClose throws synchronously', async () => {
+    const trackClose = vi.fn(() => { throw new Error('track close failed') })
+    const flush = vi.fn(async () => true)
+    const quit = vi.fn()
+    const handler = createBeforeQuitHandler({
+      getTelemetry: () => ({ trackClose, flush }),
+      killAll: vi.fn(),
+      quit,
+    })
+
+    handler({ preventDefault: vi.fn() })
+
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+    expect(trackClose).toHaveBeenCalledOnce()
+    expect(flush).toHaveBeenCalledOnce()
+  })
+
+  it('still quits when synchronous child cleanup throws', async () => {
+    const quit = vi.fn()
+    const handler = createBeforeQuitHandler({
+      getTelemetry: () => null,
+      killAll: () => { throw new Error('child cleanup failed') },
+      quit,
+    })
+
+    handler({ preventDefault: vi.fn() })
+
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+  })
+
+  it('still quits when synchronous telemetry lookup throws', async () => {
+    const quit = vi.fn()
+    const handler = createBeforeQuitHandler({
+      getTelemetry: () => { throw new Error('telemetry lookup failed') },
+      killAll: vi.fn(),
+      quit,
+    })
+
+    handler({ preventDefault: vi.fn() })
+
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+  })
+
+  it('does not wait for the timeout when telemetry cannot send yet', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'cb-main-no-consent-'))
+    try {
+      const fetchFn = vi.fn() as unknown as typeof fetch
+      const telemetry = new Telemetry({ stateDir, country: 'US', isPackaged: true, appVersion: '1', fetchFn })
+      const quit = vi.fn()
+      const handler = createBeforeQuitHandler({ getTelemetry: () => telemetry, killAll: vi.fn(), quit })
+
+      handler({ preventDefault: vi.fn() })
+      await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+      expect(fetchFn).not.toHaveBeenCalled()
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
   })
 })
 

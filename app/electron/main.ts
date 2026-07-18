@@ -14,6 +14,59 @@ let updateChecker: UpdateChecker | null = null
 /** The slice of Telemetry the bridge handlers use — injectable for tests. */
 export type TelemetryBridge = Pick<Telemetry, 'status' | 'setEnabled' | 'completeOnboarding' | 'track'>
 
+type QuitTelemetry = Pick<Telemetry, 'trackClose' | 'flush'>
+type BeforeQuitEvent = { preventDefault: () => void }
+type BeforeQuitDeps = {
+  getTelemetry: () => QuitTelemetry | null
+  killAll: () => void
+  quit: () => void
+  timeoutMs?: number
+}
+
+const QUIT_FLUSH_TIMEOUT_MS = 1500
+
+/** Intercept one quit pass, then allow the re-entrant pass after a bounded flush. */
+export function createBeforeQuitHandler(deps: BeforeQuitDeps): (event: BeforeQuitEvent) => void {
+  let flushStarted = false
+  let allowQuit = false
+  let closeTracked = false
+
+  return event => {
+    if (allowQuit) return
+    try { event.preventDefault() } catch { /* keep the quit path moving */ }
+    if (flushStarted) return
+    flushStarted = true
+
+    void (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        try { deps.killAll() } catch { /* child cleanup must not wedge quit */ }
+
+        let telemetry: QuitTelemetry | null = null
+        try { telemetry = deps.getTelemetry() } catch { /* telemetry lookup is best-effort */ }
+
+        let flush: Promise<unknown> = Promise.resolve(false)
+        if (telemetry) {
+          if (!closeTracked) {
+            closeTracked = true
+            try { telemetry.trackClose() } catch { /* flush the existing queue anyway */ }
+          }
+          try { flush = Promise.resolve(telemetry.flush()) } catch { /* use the resolved fallback */ }
+        }
+
+        const timeout = new Promise<void>(resolve => {
+          timer = setTimeout(resolve, deps.timeoutMs ?? QUIT_FLUSH_TIMEOUT_MS)
+        })
+        await Promise.race([flush.catch(() => false), timeout])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+        allowQuit = true
+        try { deps.quit() } catch { /* a throwing quit call must not reset the guard */ }
+      }
+    })()
+  }
+}
+
 // Result envelope: handlers never throw across IPC so the structured error
 // `kind` survives contextBridge serialization. preload.ts unwraps it.
 export type Envelope<T = unknown> = { ok: true; value: T } | { ok: false; error: { kind: string; message: string } }
@@ -485,12 +538,11 @@ function bootstrap(): void {
     win.focus()
   })
 
-  app.on('before-quit', () => {
-    killAll()
-    // Best-effort final beat: session duration + whatever is still queued.
-    telemetryInstance?.trackClose()
-    void telemetryInstance?.flush()
-  })
+  app.on('before-quit', createBeforeQuitHandler({
+    getTelemetry: () => telemetryInstance,
+    killAll,
+    quit: () => app.quit(),
+  }))
 
   void app.whenReady().then(() => {
     // Consent-gated anonymous telemetry (desktop only). Nothing transmits until

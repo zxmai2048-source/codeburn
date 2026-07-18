@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -153,6 +153,78 @@ describe('events', () => {
     telemetry.track('usage_snapshot', { costBucket: '1-10' })
     telemetry.track('usage_snapshot', { costBucket: '10-50' })
     expect(telemetry.queueLength).toBe(before + 1)
+  })
+
+  it('caps cli_error per kind per local day while leaving other events unaffected', async () => {
+    let instant = new Date('2026-07-17T12:00:00')
+    const { telemetry, posts } = make({ now: () => instant })
+    telemetry.completeOnboarding(true)
+
+    for (let i = 0; i < 25; i++) telemetry.track('cli_error', { kind: 'timeout', cmd: 'status' })
+    telemetry.track('cli_error', { kind: 'not-found', cmd: 'status' })
+    telemetry.track('section_view', { section: 'spend' })
+
+    expect(telemetry.queueLength).toBe(23) // app_open + 20 timeout + one other kind + one other event
+
+    instant = new Date('2026-07-18T12:00:00')
+    telemetry.track('cli_error', { kind: 'timeout', cmd: 'status' })
+    expect(telemetry.queueLength).toBe(24)
+
+    await telemetry.flush()
+    const body = posts[0]!.body as { events: Array<{ name: string; day: string; props: Record<string, unknown> }> }
+    const timeoutEvents = body.events.filter(event => event.name === 'cli_error' && event.props.kind === 'timeout')
+    expect(timeoutEvents.filter(event => event.day === '2026-07-17')).toHaveLength(20)
+    expect(timeoutEvents.filter(event => event.day === '2026-07-18')).toHaveLength(1)
+    expect(body.events.filter(event => event.name === 'cli_error' && event.props.kind === 'not-found')).toHaveLength(1)
+    expect(body.events.filter(event => event.name === 'section_view')).toHaveLength(1)
+  })
+
+  it('persists the cli_error cap across restarts on the same local day', () => {
+    const instant = new Date('2026-07-17T12:00:00')
+    const { telemetry } = make({ now: () => instant })
+    telemetry.completeOnboarding(true)
+    for (let i = 0; i < 20; i++) telemetry.track('cli_error', { kind: 'timeout', cmd: 'status' })
+
+    const reloaded = new Telemetry({ stateDir: dir, country: 'US', isPackaged: true, appVersion: '1', now: () => instant })
+    reloaded.track('cli_error', { kind: 'timeout', cmd: 'status' })
+    expect(reloaded.queueLength).toBe(0)
+    reloaded.track('cli_error', { kind: 'not-found', cmd: 'status' })
+    expect(reloaded.queueLength).toBe(1)
+
+    const raw = JSON.parse(readFileSync(join(dir, 'telemetry.v1.json'), 'utf-8'))
+    expect(raw).toMatchObject({ cliErrorDay: '2026-07-17', cliErrorCounts: { timeout: 20, 'not-found': 1 } })
+  })
+
+  it('falls back to fresh cli_error counters when the persisted budget is malformed', () => {
+    const instant = new Date('2026-07-17T12:00:00')
+    const { telemetry } = make({ now: () => instant })
+    telemetry.completeOnboarding(true)
+    const stateFile = join(dir, 'telemetry.v1.json')
+    const raw = JSON.parse(readFileSync(stateFile, 'utf-8'))
+    writeFileSync(stateFile, JSON.stringify({ ...raw, cliErrorDay: '2026-07-17', cliErrorCounts: { timeout: 'many' } }))
+
+    const reloaded = new Telemetry({ stateDir: dir, country: 'US', isPackaged: true, appVersion: '1', now: () => instant })
+    for (let i = 0; i < 25; i++) reloaded.track('cli_error', { kind: 'timeout', cmd: 'status' })
+    expect(reloaded.queueLength).toBe(20)
+    expect(reloaded.status()).toMatchObject({ enabled: true, onboarded: true })
+  })
+
+  it('evicts the oldest event so app_close survives a full queue', async () => {
+    const { telemetry, posts } = make()
+    telemetry.completeOnboarding(true)
+    for (let i = 0; i < 199; i++) telemetry.track('section_view', { section: `section-${i}` })
+    telemetry.track('section_view', { section: 'dropped-at-capacity' })
+    expect(telemetry.queueLength).toBe(200)
+
+    telemetry.trackClose()
+    expect(telemetry.queueLength).toBe(200)
+    await telemetry.flush()
+
+    const body = posts[0]!.body as { events: Array<{ name: string; props: Record<string, unknown> }> }
+    expect(body.events).toHaveLength(200)
+    expect(body.events[0]).toMatchObject({ name: 'section_view', props: { section: 'section-0' } })
+    expect(body.events.at(-1)?.name).toBe('app_close')
+    expect(body.events.some(event => event.props.section === 'dropped-at-capacity')).toBe(false)
   })
 
   it('keeps the queue on a transient failure (5xx) and clears it on success', async () => {

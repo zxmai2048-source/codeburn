@@ -43,6 +43,7 @@ export const EVENT_NAMES = new Set([
 ])
 
 const MAX_QUEUE = 200
+const MAX_CLI_ERRORS_PER_KIND_PER_DAY = 20
 const MAX_STRING = 64
 const MAX_ARRAY = 12
 const MAX_KEYS = 16
@@ -62,6 +63,8 @@ type PersistedState = {
   enabled: boolean
   onboardedAt?: string
   lastSnapshotDay?: string
+  cliErrorDay?: string
+  cliErrorCounts?: Record<string, number>
 }
 
 type Deps = {
@@ -83,6 +86,17 @@ type QueuedEvent = { name: string; day: string; props: Record<string, unknown> }
 
 function dayKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function loadCliErrorBudget(day: unknown, counts: unknown): Pick<PersistedState, 'cliErrorDay' | 'cliErrorCounts'> {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return {}
+  if (!counts || typeof counts !== 'object' || Array.isArray(counts)) return {}
+  const cleanCounts = Object.create(null) as Record<string, number>
+  for (const [kind, count] of Object.entries(counts)) {
+    if (!Number.isInteger(count) || (count as number) < 0 || (count as number) > MAX_CLI_ERRORS_PER_KIND_PER_DAY) return {}
+    cleanCounts[kind] = count as number
+  }
+  return { cliErrorDay: day, cliErrorCounts: cleanCounts }
 }
 
 function sanitizeValue(value: unknown): unknown | undefined {
@@ -152,6 +166,7 @@ export class Telemetry {
           enabled: raw.enabled,
           onboardedAt: typeof raw.onboardedAt === 'string' ? raw.onboardedAt : undefined,
           lastSnapshotDay: typeof raw.lastSnapshotDay === 'string' ? raw.lastSnapshotDay : undefined,
+          ...loadCliErrorBudget(raw.cliErrorDay, raw.cliErrorCounts),
         }
       }
     } catch { /* first run or unreadable — start fresh */ }
@@ -206,14 +221,30 @@ export class Telemetry {
     if (!this.state.enabled) return
     // usage_snapshot is an aggregate: at most one per calendar day.
     const now = (this.deps.now ?? (() => new Date()))()
+    const day = dayKey(now)
     if (name === 'usage_snapshot') {
-      const day = dayKey(now)
       if (this.state.lastSnapshotDay === day) return
       this.state.lastSnapshotDay = day
       this.save()
     }
-    if (this.queue.length >= MAX_QUEUE) return
-    this.queue.push({ name, day: dayKey(now), props: sanitizeProps(props) })
+    if (this.queue.length >= MAX_QUEUE) {
+      if (name !== 'app_close') return
+      this.queue.shift()
+    }
+    const sanitizedProps = sanitizeProps(props)
+    if (name === 'cli_error') {
+      if (this.state.cliErrorDay !== day) {
+        this.state.cliErrorDay = day
+        this.state.cliErrorCounts = Object.create(null) as Record<string, number>
+      }
+      const counts = this.state.cliErrorCounts ?? (this.state.cliErrorCounts = Object.create(null) as Record<string, number>)
+      const kind = typeof sanitizedProps.kind === 'string' ? sanitizedProps.kind : ''
+      const count = Object.prototype.hasOwnProperty.call(counts, kind) ? counts[kind]! : 0
+      if (count >= MAX_CLI_ERRORS_PER_KIND_PER_DAY) return
+      counts[kind] = count + 1
+      this.save()
+    }
+    this.queue.push({ name, day, props: sanitizedProps })
   }
 
   /** Record session duration; queued for the next (final) flush. */
