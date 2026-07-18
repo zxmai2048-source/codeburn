@@ -135,7 +135,9 @@ export function overviewMemoKey(provider: string, period: Period, range: DateRan
 // provider at a time at low priority so the background scan never competes with
 // the interaction the user is actually having.
 const PREFETCH_START_DELAY_MS = 1500
-const PREFETCH_STAGGER_MS = 400
+// A warm spawn takes seconds, so a 400ms stagger let the loop fire the whole set
+// almost at once; pace it wide enough that each warm genuinely trails the last.
+const PREFETCH_STAGGER_MS = 2000
 // Base instant-switch memo keys live during overview polling besides the per-
 // provider prefetch entries: `overview|all`, `overview-act`, `overview-yield`,
 // plus one slot of headroom for section navigation. The memo cap is sized to
@@ -148,11 +150,11 @@ function isPeriod(value: string): value is Period {
   return (STANDARD_PERIODS as string[]).includes(value)
 }
 
-/** Boot period = the persisted "Default period" Settings writes, else 30 days. */
+/** Boot period = the persisted "Default period" Settings writes, else today. */
 function initialPeriod(): Period {
   let saved: string | null = null
   try { saved = globalThis.localStorage?.getItem('codeburn.defaultPeriod') ?? null } catch { /* storage can be unavailable */ }
-  return saved && isPeriod(saved) ? saved : '30days'
+  return saved && isPeriod(saved) ? saved : 'today'
 }
 
 /** Persisted Claude config override (empty/absent = aggregate all configs). */
@@ -349,6 +351,10 @@ function AppMain() {
   // already warmed. New keys (a new provider id, or a period switch) still warm
   // exactly once. Without this the prefetch re-fired every poll: 12 redundant
   // full-history CLI parses every 30s, forever.
+  // Mirror the visible overview's fetch state into a ref so the prefetch can hold
+  // for a user-triggered fetch without re-arming the whole loop on each toggle.
+  const overviewBusyRef = useRef(false)
+  overviewBusyRef.current = overview.loading
   const warmedKeys = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!ready || overview.data == null || customRange || claudeConfigSource) return
@@ -356,16 +362,25 @@ function AppMain() {
     if (targets.length === 0) return
     let cancelled = false
     const warm = async () => {
-      for (const id of targets) {
-        if (cancelled) return
-        const key = overviewMemoKey(id, period, null, null)
-        if (warmedKeys.current.has(key) || hasPolledMemo(key)) continue
+      for (let i = 0; i < targets.length && !cancelled; ) {
+        const key = overviewMemoKey(targets[i]!, period, null, null)
+        if (warmedKeys.current.has(key) || hasPolledMemo(key)) { i++; continue }
+        // Only warm while the visible overview is idle: a user fetch in flight
+        // takes priority (background-classed CLI spawns yield their slot to it),
+        // so hold and retry this provider after the stagger rather than race it.
+        if (overviewBusyRef.current) {
+          await new Promise(resolve => setTimeout(resolve, PREFETCH_STAGGER_MS))
+          continue
+        }
         warmedKeys.current.add(key)
         try {
-          const value = await codeburn.getOverview(period, id)
+          // background priority (5th arg) so this never delays an interactive
+          // poll; ignored by an older preload, degrading to current behavior.
+          const value = await codeburn.getOverview(period, targets[i]!, undefined, undefined, true)
           if (!cancelled) primePolledMemo(key, value)
         } catch { /* best-effort warm; a real switch will fetch and surface any error */ }
-        if (!cancelled) await new Promise(resolve => setTimeout(resolve, PREFETCH_STAGGER_MS))
+        i++
+        if (!cancelled && i < targets.length) await new Promise(resolve => setTimeout(resolve, PREFETCH_STAGGER_MS))
       }
     }
     const start = setTimeout(() => { void warm() }, PREFETCH_START_DELAY_MS)

@@ -10,6 +10,14 @@ export type CliErrorKind = 'not-found' | 'nonzero' | 'bad-json' | 'timeout' | 't
 export type ActionResult = { ok: boolean; stdout: string; stderr: string; code: number | null }
 
 /**
+ * Scheduling class for a CLI spawn. 'interactive' is what a user is waiting on
+ * (the visible poll, a Settings mutation); 'background' is speculative work
+ * (the overview prefetch). Interactive always dequeues first, so a burst of
+ * background warms can never delay the fetch behind a click.
+ */
+export type SpawnPriority = 'interactive' | 'background'
+
+/**
  * A resolved CLI target. `external` is a standalone `codeburn` executable (the
  * dev repo build, a persisted path, or one found on PATH) spawned directly.
  * `bundled` is the copy shipped inside the packaged app under `resources/cli`;
@@ -51,16 +59,60 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 // Same-cadence pollers fire near-identical read spawns; share one child and hold
 // its result briefly so six overview hooks don't launch six processes at once.
 const COALESCE_TTL_MS = 5_000
+// A cold-cache CLI spawn costs seconds at ~120% CPU; letting every poll +
+// prefetch launch at once saturates the machine. Cap how many children run
+// concurrently — the rest queue and drain as slots free (interactive first).
+const MAX_CONCURRENT_CLI = 2
 
 // Every live child so `before-quit` can reap them (Electron does not on macOS).
 const activeChildren = new Set<ChildProcess>()
 const readInflight = new Map<string, Promise<unknown>>()
 const readCache = new Map<string, { at: number; value: unknown }>()
 
-/** SIGKILL every in-flight child. Wired to Electron's `before-quit`. */
+// Concurrency scheduler. `running` counts spawned (not queued) children; waiters
+// hold the slot-grant resolver for a queued spawn. Two queues so interactive
+// work jumps ahead of any already-queued background warm the moment a slot frees.
+type SlotWaiter = { resolve: () => void; reject: (err: unknown) => void }
+let running = 0
+const interactiveQueue: SlotWaiter[] = []
+const backgroundQueue: SlotWaiter[] = []
+
+/** Grant free slots to queued waiters, interactive first, up to the cap. */
+function pumpSlots(): void {
+  while (running < MAX_CONCURRENT_CLI) {
+    const waiter = interactiveQueue.shift() ?? backgroundQueue.shift()
+    if (!waiter) return
+    running += 1
+    waiter.resolve()
+  }
+}
+
+/** Resolve once a run slot is free. The per-call timeout starts only after this
+ *  resolves (i.e. at real spawn time), never while queued. */
+function acquireSlot(priority: SpawnPriority): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    ;(priority === 'background' ? backgroundQueue : interactiveQueue).push({ resolve, reject })
+    pumpSlots()
+  })
+}
+
+function releaseSlot(): void {
+  running = Math.max(0, running - 1)
+  pumpSlots()
+}
+
+/** SIGKILL every in-flight child and cancel anything still queued for a slot.
+ *  Wired to Electron's `before-quit`. */
 export function killAll(): void {
   for (const child of activeChildren) child.kill('SIGKILL')
   activeChildren.clear()
+  // A queued waiter has no child to reap, so releaseSlot never fires for it;
+  // reject it explicitly so its caller settles instead of hanging past quit.
+  const waiting = [...interactiveQueue, ...backgroundQueue]
+  interactiveQueue.length = 0
+  backgroundQueue.length = 0
+  running = 0
+  for (const waiter of waiting) waiter.reject(new CliError('nonzero', 'codeburn cancelled'))
 }
 
 // Homebrew + common Node version managers, mirroring mac/CodeburnCLI.swift so a
@@ -331,7 +383,7 @@ function runCli(spec: SpawnSpec, cmdLabel: string, timeoutMs: number, onStderr?:
  */
 export function spawnCli(
   args: string[],
-  opts: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv } = {},
+  opts: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv; priority?: SpawnPriority } = {},
 ): Promise<unknown> {
   const target = resolveTarget()
   if (!target) return Promise.reject(new CliError('not-found', 'codeburn CLI not found', notFoundStage()))
@@ -344,26 +396,49 @@ export function spawnCli(
   const existing = readInflight.get(key)
   // A same-cadence re-poll during a slow cold warmup coalesces onto the one
   // in-flight child (which already carries onStderr); no second cold parse.
+  // Coalesce/cache hits settle here, BEFORE queueing, so they never hold a slot.
   if (existing) return existing
 
-  const flight = runCli(spec, args[0] ?? '', opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts.onStderr)
+  const priority = opts.priority ?? 'interactive'
+  const flight = (async () => {
+    await acquireSlot(priority)
+    try {
+      return await runCli(spec, args[0] ?? '', opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts.onStderr)
+    } finally {
+      releaseSlot()
+    }
+  })()
     .then(value => { readCache.set(key, { at: Date.now(), value }); return value })
     .finally(() => { readInflight.delete(key) })
   readInflight.set(key, flight)
   return flight
 }
 
-/** Spawn a config-mutating CLI command and return its text output verbatim. */
+/** Spawn a config-mutating CLI command and return its text output verbatim.
+ *  Mutations count as interactive, so they take a run slot ahead of any queued
+ *  background warm — a Settings save is never stuck behind speculative prefetch. */
 export function spawnCliAction(args: string[], opts: { timeoutMs?: number } = {}): Promise<ActionResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  return new Promise<ActionResult>(resolve => {
-    const target = resolveTarget()
-    if (!target) {
-      resolve({ ok: false, stdout: '', stderr: 'codeburn CLI not found', code: null })
-      return
+  const target = resolveTarget()
+  if (!target) return Promise.resolve({ ok: false, stdout: '', stderr: 'codeburn CLI not found', code: null })
+  const spec = spawnSpecFor(target, args)
+  return (async () => {
+    try {
+      await acquireSlot('interactive')
+    } catch {
+      // Slot grant was cancelled (killAll during quit); never reached a spawn.
+      return { ok: false, stdout: '', stderr: 'codeburn cancelled', code: null }
     }
-    const spec = spawnSpecFor(target, args)
+    try {
+      return await runAction(spec, args, timeoutMs)
+    } finally {
+      releaseSlot()
+    }
+  })()
+}
 
+function runAction(spec: SpawnSpec, args: string[], timeoutMs: number): Promise<ActionResult> {
+  return new Promise<ActionResult>(resolve => {
     const child = spawn(spec.bin, spec.args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: spec.env })
     activeChildren.add(child)
     let stdout = ''

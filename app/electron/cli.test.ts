@@ -384,6 +384,133 @@ describe('killAll', () => {
   })
 })
 
+describe('spawnCli concurrency scheduler', () => {
+  // A fake CLI that records each spawn (by subcommand) and then blocks until a
+  // release file named after that subcommand appears, so the test controls
+  // exactly when each child exits and can observe how many run at once.
+  function schedulerBin(startedFile: string, releaseDir: string): void {
+    fakeBin(
+      'sched.js',
+      `const fs = require('fs'); const path = require('path');
+       const cmd = process.argv[2];
+       fs.appendFileSync(${JSON.stringify(startedFile)}, cmd + '\\n');
+       const rel = path.join(${JSON.stringify(releaseDir)}, cmd);
+       const t = setInterval(() => {
+         if (fs.existsSync(rel)) { clearInterval(t); process.stdout.write('{}'); process.exit(0); }
+       }, 5);`,
+    )
+  }
+  function startedList(startedFile: string): string[] {
+    try { return readFileSync(startedFile, 'utf8').split('\n').filter(Boolean) } catch { return [] }
+  }
+  function release(releaseDir: string, cmd: string): void { writeFileSync(join(releaseDir, cmd), '') }
+  async function waitUntil(cond: () => boolean, timeoutMs = 3000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (!cond()) {
+      if (Date.now() > deadline) throw new Error('waitUntil timed out')
+      await new Promise(r => setTimeout(r, 10))
+    }
+  }
+  const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+  // Reset scheduler state so a leaked running slot can never starve the next test.
+  afterEach(() => { killAll() })
+
+  it('runs at most two children at once; a third waits for a freed slot', async () => {
+    const startedFile = join(dir, 'started')
+    const releaseDir = join(dir, 'release'); mkdirSync(releaseDir)
+    schedulerBin(startedFile, releaseDir)
+
+    const p1 = spawnCli(['status'])
+    const p2 = spawnCli(['models'])
+    const p3 = spawnCli(['sessions'])
+    await waitUntil(() => startedList(startedFile).length === 2)
+    await delay(100) // the cap must keep the third from sneaking in
+    expect(startedList(startedFile).sort()).toEqual(['models', 'status'])
+
+    release(releaseDir, 'status') // free one slot
+    await waitUntil(() => startedList(startedFile).includes('sessions'))
+
+    release(releaseDir, 'models'); release(releaseDir, 'sessions')
+    await Promise.all([p1, p2, p3])
+  })
+
+  it('lets a later interactive spawn preempt an earlier queued background one', async () => {
+    const startedFile = join(dir, 'started')
+    const releaseDir = join(dir, 'release'); mkdirSync(releaseDir)
+    schedulerBin(startedFile, releaseDir)
+
+    // Fill both slots so the next two calls must queue.
+    const p1 = spawnCli(['fill1'], { priority: 'background' })
+    const p2 = spawnCli(['fill2'], { priority: 'background' })
+    await waitUntil(() => startedList(startedFile).length === 2)
+
+    // Queue a background first, then an interactive.
+    const pbg = spawnCli(['bg'], { priority: 'background' })
+    const pint = spawnCli(['inter'], { priority: 'interactive' })
+    await delay(50)
+    expect(startedList(startedFile)).not.toContain('bg')
+    expect(startedList(startedFile)).not.toContain('inter')
+
+    // Free exactly one slot: the interactive must take it despite queueing later.
+    release(releaseDir, 'fill1')
+    await waitUntil(() => startedList(startedFile).length === 3)
+    expect(startedList(startedFile)).toContain('inter')
+    expect(startedList(startedFile)).not.toContain('bg')
+
+    release(releaseDir, 'fill2'); release(releaseDir, 'inter'); release(releaseDir, 'bg')
+    await Promise.all([p1, p2, pbg, pint])
+  })
+
+  it('does not spend a slot on a coalesced (same-argv) call', async () => {
+    const startedFile = join(dir, 'started')
+    const releaseDir = join(dir, 'release'); mkdirSync(releaseDir)
+    schedulerBin(startedFile, releaseDir)
+
+    const p1 = spawnCli(['status'])
+    const p2 = spawnCli(['models'])
+    await waitUntil(() => startedList(startedFile).length === 2)
+
+    const p1b = spawnCli(['status'])   // coalesces onto p1's child — no new slot
+    const p3 = spawnCli(['sessions'])  // genuinely new — queued behind the cap
+    await delay(100)
+    expect(startedList(startedFile).length).toBe(2) // still just the two originals
+
+    release(releaseDir, 'status') // frees the slot the coalesced pair shared
+    await waitUntil(() => startedList(startedFile).includes('sessions'))
+
+    release(releaseDir, 'models'); release(releaseDir, 'sessions')
+    const [a, b] = await Promise.all([p1, p1b])
+    expect(a).toEqual(b) // one child served both callers
+    await Promise.all([p2, p3])
+  })
+
+  it('cancels a queued spawn on killAll instead of letting it spawn later', async () => {
+    const startedFile = join(dir, 'started')
+    const releaseDir = join(dir, 'release'); mkdirSync(releaseDir)
+    schedulerBin(startedFile, releaseDir)
+
+    const p1 = spawnCli(['status'])
+    const p2 = spawnCli(['models'])
+    await waitUntil(() => startedList(startedFile).length === 2)
+    const p3 = spawnCli(['sessions']) // queued behind the cap, no child yet
+    await delay(50)
+    expect(startedList(startedFile)).not.toContain('sessions')
+
+    killAll() // reaps the two running AND cancels the queued third
+    // Attach all three rejection handlers synchronously: the queued spawn rejects
+    // at once, so it must not sit unhandled while the killed children settle.
+    await Promise.all([
+      expect(p1).rejects.toMatchObject({ kind: 'nonzero' }),
+      expect(p2).rejects.toMatchObject({ kind: 'nonzero' }),
+      expect(p3).rejects.toMatchObject({ kind: 'nonzero' }),
+    ])
+
+    await delay(50)
+    expect(startedList(startedFile)).not.toContain('sessions') // never spawned
+  })
+})
+
 describe('spawnCliAction', () => {
   it('returns stdout and ok:true on success', async () => {
     fakeBin('action-ok.js', 'process.stdout.write("currency updated")')

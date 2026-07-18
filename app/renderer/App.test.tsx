@@ -17,7 +17,7 @@ vi.stubGlobal('localStorage', {
 })
 
 const mocks = vi.hoisted(() => ({
-  getOverview: vi.fn<(period: string, provider: string, range?: DateRange, configSource?: string | null) => Promise<MenubarPayload>>(),
+  getOverview: vi.fn<(period: string, provider: string, range?: DateRange, configSource?: string | null, background?: boolean) => Promise<MenubarPayload>>(),
   getSpendFlow: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<SpendFlow>>(),
   getOptimizeReport: vi.fn<(period: string, provider: string, range?: DateRange) => Promise<OptimizeJsonReport>>(),
   getModels: vi.fn(),
@@ -177,6 +177,9 @@ describe('App shortcuts', () => {
   beforeEach(() => {
     installDefaultMocks()
     localStorage.clear()
+    // Pin the boot period so the provider/config tests below are independent of
+    // the app-wide default ('today'); tests that exercise the default set it.
+    localStorage.setItem('codeburn.defaultPeriod', '30days')
     document.documentElement.removeAttribute('data-theme')
   })
 
@@ -188,7 +191,13 @@ describe('App shortcuts', () => {
   })
 
   it('boots with the persisted default period from Settings', async () => {
-    localStorage.setItem('codeburn.defaultPeriod', 'today')
+    localStorage.setItem('codeburn.defaultPeriod', 'week')
+    render(<App />)
+    await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('week', 'all'))
+  })
+
+  it('boots to today when no default period is persisted', async () => {
+    localStorage.removeItem('codeburn.defaultPeriod')
     render(<App />)
     await waitFor(() => expect(mocks.getOverview).toHaveBeenCalledWith('today', 'all'))
   })
@@ -482,6 +491,9 @@ describe('provider prefetch storm', () => {
     // Pin the cadence to 30s so the fake-timer soak math below is independent of
     // the app-wide default (bumped to 60s for energy).
     localStorage.setItem('codeburn.refreshInterval', '30s')
+    // Pin the boot period so these prefetch assertions are independent of the
+    // app-wide default ('today').
+    localStorage.setItem('codeburn.defaultPeriod', '30days')
     __resetPolledMemo()
   })
 
@@ -502,7 +514,8 @@ describe('provider prefetch storm', () => {
 
       for (const id of PROVIDERS) {
         const spawns = mocks.getOverview.mock.calls.filter(
-          c => c[0] === '30days' && c[1] === id && c[2] === undefined && c[3] === undefined,
+          // Prefetch warms carry the background-priority flag (5th arg).
+          c => c[0] === '30days' && c[1] === id && c[2] === undefined && c[3] === undefined && c[4] === true,
         )
         expect(spawns.length, `prefetch spawns for ${id}`).toBe(1)
       }
@@ -579,6 +592,9 @@ describe('currency correctness', () => {
     // Reset the module-level display currency so a prior test never bleeds in.
     setActiveCurrency(USD)
     localStorage.clear()
+    // Pin the boot period so the memo keys below match the app's boot fetch,
+    // independent of the app-wide default ('today').
+    localStorage.setItem('codeburn.defaultPeriod', '30days')
     __resetPolledMemo()
   })
 

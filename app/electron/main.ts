@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from 'electron'
 import path from 'node:path'
 
-import { CliError, killAll, resolveCodeburnPath, spawnCli, spawnCliAction, type ActionResult } from './cli'
+import { CliError, killAll, resolveCodeburnPath, spawnCli, spawnCliAction, type ActionResult, type SpawnPriority } from './cli'
 import { getQuota, sanitizeError } from './quota'
 import { Telemetry } from './telemetry'
 import { createUpdateChecker, type UpdateChecker, type UpdateStatus } from './updates'
@@ -214,7 +214,7 @@ function cliErrorProps(err: unknown, cmd: string | undefined): Record<string, un
 }
 
 type Deps = {
-  spawnCli: (args: string[], opts?: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv }) => Promise<unknown>
+  spawnCli: (args: string[], opts?: { timeoutMs?: number; onStderr?: (chunk: string) => void; extraEnv?: NodeJS.ProcessEnv; priority?: SpawnPriority }) => Promise<unknown>
   spawnCliAction: (args: string[], opts?: { timeoutMs?: number }) => Promise<ActionResult>
   resolveCodeburnPath: () => string | null
   getQuota: typeof getQuota
@@ -274,15 +274,20 @@ export function createBridgeHandlers(deps: Deps = { spawnCli, spawnCliAction, re
     ...providerArgs(vProvider(provider)), ...rangeArgs(vRange(range)), ...configSourceArgs(vConfigSource(configSource)),
   ]
 
-  const getOverview: Handler = async (period: string, provider: string, range?: DateRange, configSource?: string | null) => {
+  // `background` (renderer prefetch only) drops this fetch to background priority
+  // so it yields the CLI's run slots to any interactive poll or click. Optional
+  // and defaulting to interactive, so an older preload that omits it is unchanged.
+  const getOverview: Handler = async (period: string, provider: string, range?: DateRange, configSource?: string | null, background?: boolean) => {
     coldStartBegan ??= Date.now()
+    const priority: SpawnPriority | undefined = background ? 'background' : undefined
     try {
       const args = buildOverviewArgs(period, provider, range, configSource)
-      if (overviewWarmed) return { ok: true, value: await deps.spawnCli(args) }
+      if (overviewWarmed) return { ok: true, value: await deps.spawnCli(args, priority ? { priority } : undefined) }
       const value = await deps.spawnCli(args, {
         timeoutMs: WARMUP_TIMEOUT_MS,
         extraEnv: { CODEBURN_PROGRESS: '1' },
         onStderr: makeProgressReader(emitProgress),
+        ...(priority ? { priority } : {}),
       })
       overviewWarmed = true
       emitProgress({ kind: 'done' })

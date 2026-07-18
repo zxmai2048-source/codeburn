@@ -429,6 +429,20 @@ describe('createBridgeHandlers (cold-start warmup)', () => {
     expect(opts[1]?.extraEnv).toBeUndefined()
   })
 
+  it('drops a warmed overview to background priority only when the prefetch flag is set', async () => {
+    const opts: Array<Record<string, unknown> | undefined> = []
+    const spawnCli = vi.fn(async (_args: string[], o?: Record<string, unknown>) => { opts.push(o); return { current: { cost: 1 } } })
+    const handlers = createBridgeHandlers(base({ spawnCli, emitProgress: vi.fn() }))
+
+    await handlers['codeburn:getOverview']!('30days', 'all') // cold warmup → interactive
+    await handlers['codeburn:getOverview']!('30days', 'claude') // warmed, no flag → interactive
+    await handlers['codeburn:getOverview']!('30days', 'grok', undefined, null, true) // prefetch → background
+
+    expect(opts[0]?.priority).toBeUndefined()
+    expect(opts[1]?.priority).toBeUndefined()
+    expect(opts[2]?.priority).toBe('background')
+  })
+
   it('re-arms the long timeout when the first overview fails (cache is still cold)', async () => {
     const opts: Array<{ timeoutMs?: number } | undefined> = []
     let n = 0
