@@ -117,6 +117,11 @@ describe('getShortModelName', () => {
     // grok-composer has no alias, just a missing display entry.
     expect(getShortModelName('grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
   })
+
+  it('shows the last path segment for an unmapped path-style raw id', () => {
+    expect(getShortModelName('fireworks/models/kimi-k2p7-code')).toBe('kimi-k2p7-code')
+    expect(getShortModelName('fireworks/routers/glm-fast-latest')).toBe('glm-fast-latest')
+  })
 })
 
 describe('claude-fable-5 pricing + name', () => {

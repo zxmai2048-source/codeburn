@@ -699,6 +699,27 @@ describe('usage_snapshot telemetry props', () => {
     }
   }
 
+  it('caps providers at 8, sorted by cost descending, bucketed', () => {
+    const p = enrichedPayload()
+    p.current.providers = {
+      claude: 500, codex: 40, gemini: 5, cursor: 0.5, antigravity: 300,
+      copilot: 20, windsurf: 2, amp: 0.1, cline: 0.02,
+    }
+    const props = sanitizeProps(usageSnapshotProps(p))
+    const providers = props.providers as Array<{ name: string; costBucket: string }>
+    expect(providers).toHaveLength(8)
+    expect(providers).toEqual([
+      { name: 'claude', costBucket: '200-1k' },
+      { name: 'antigravity', costBucket: '200-1k' },
+      { name: 'codex', costBucket: '10-50' },
+      { name: 'copilot', costBucket: '10-50' },
+      { name: 'gemini', costBucket: '1-10' },
+      { name: 'windsurf', costBucket: '1-10' },
+      { name: 'cursor', costBucket: '<1' },
+      { name: 'amp', costBucket: '<1' },
+    ])
+  })
+
   it('crosses each top model with its dominant task category when the report joins', () => {
     // The overview model name is the display/short name; for Claude that equals
     // modelDisplayName, which is how the by-model report row joins back.

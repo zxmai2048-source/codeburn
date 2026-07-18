@@ -187,6 +187,14 @@ describe('antigravity provider helpers', () => {
     expect(extractAntigravityModelMap(null)).toEqual({})
   })
 
+  it('never leaks a raw MODEL_PLACEHOLDER id as the canonical model name', () => {
+    // The config key itself is still the unresolved placeholder (Antigravity
+    // hasn't shipped a friendly key/displayName for this model yet).
+    expect(extractAntigravityModelMap({
+      models: { MODEL_PLACEHOLDER_M26: { model: 'MODEL_PLACEHOLDER_M26' } },
+    })).toEqual({ MODEL_PLACEHOLDER_M26: 'unknown' })
+  })
+
   it('extracts generator metadata from wrapped and unwrapped RPC responses', () => {
     const metadata = [{
       chatModel: {

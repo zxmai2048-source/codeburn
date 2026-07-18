@@ -78,6 +78,12 @@ export function usageSnapshotProps(payload: MenubarPayload, modelCategories?: Ma
       if (topCategory) entry.topCategory = topCategory
       return entry
     }),
+    // Per-provider spend, same cost-bucketing as models. `providers` maps lowercased
+    // display name -> cost USD; sort by cost so the top spenders survive the cap.
+    providers: Object.entries(payload.current.providers ?? {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, cost]) => ({ name, costBucket: costBucket(cost) })),
     // Aggregate task categories (the "purpose" dimension across all models).
     categories: (payload.current.topActivities ?? []).slice(0, 12).map(activity => ({
       name: activity.name,
