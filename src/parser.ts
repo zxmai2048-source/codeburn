@@ -263,6 +263,12 @@ function findObjectFieldValue(source: JsonSource, objectStart: number, objectEnd
     : findObjectFieldValueBuffer(source.raw, objectStart, objectEnd, field)
 }
 
+function findJsonValueBounds(source: JsonSource, start: number, limit = source.length): JsonValueBounds | null {
+  return typeof source.raw === 'string'
+    ? findJsonValueBoundsString(source.raw, start, limit)
+    : findJsonValueBoundsBuffer(source.raw, start, limit)
+}
+
 function readJsonString(source: JsonSource, bounds: JsonValueBounds | null, cap = Number.POSITIVE_INFINITY): string | undefined {
   if (typeof source.raw === 'string') return readJsonStringString(source.raw, bounds, cap)
   return readJsonStringBuffer(source.raw, bounds, cap)
@@ -443,29 +449,108 @@ function extractLargeAddedNames(source: JsonSource, attachmentBounds: JsonValueB
   return names
 }
 
+// Does the raw key bytes/chars at [keyStart, keyEnd) equal one of `fields`? This
+// compares the RAW key (escapes and all), exactly as findObjectFieldValue did, so
+// a key like "type" still does not match "type". Returns the matched field
+// name so the caller can bucket the value.
+function matchCapturedField(
+  source: JsonSource,
+  fieldBuffers: Buffer[] | null,
+  keyStart: number,
+  keyEnd: number,
+  fields: readonly string[],
+): string | null {
+  if (fieldBuffers === null) {
+    const key = (source.raw as string).slice(keyStart, keyEnd)
+    return fields.includes(key) ? key : null
+  }
+  const raw = source.raw as Buffer
+  const keyLength = keyEnd - keyStart
+  for (let k = 0; k < fields.length; k++) {
+    const fieldBuffer = fieldBuffers[k]!
+    if (keyLength === fieldBuffer.length && raw.subarray(keyStart, keyEnd).equals(fieldBuffer)) return fields[k]!
+  }
+  return null
+}
+
+// Single pass over one JSON object, capturing the bounds of several top-level
+// fields at once. This is the multi-field generalization of findObjectFieldValue:
+// it reproduces that walk exactly — same whitespace/comma handling, same
+// first-match-wins on duplicate keys, and the same "stop on a truncated key or an
+// unparseable value" behavior that findObjectFieldValue expressed as `return null`
+// — but visits each byte once instead of re-walking the object per field. On large
+// Claude lines a multi-KB tool blob often precedes these keys, so a per-field walk
+// re-scanned that blob once for every field it trailed.
+function extractObjectFields(
+  source: JsonSource,
+  objectStart: number,
+  objectEnd: number,
+  fields: readonly string[],
+): Record<string, JsonValueBounds | null> {
+  const captured: Record<string, JsonValueBounds | null> = {}
+  for (const field of fields) captured[field] = null
+  if (jsonCharCodeAt(source, objectStart) !== 0x7b) return captured
+
+  const fieldBuffers = typeof source.raw === 'string' ? null : fields.map((f) => Buffer.from(f))
+  let remaining = fields.length
+  let i = objectStart + 1
+  while (i < objectEnd - 1 && remaining > 0) {
+    i = skipJsonWhitespace(source, i, objectEnd)
+    const ch = jsonCharCodeAt(source, i)
+    if (ch === 0x2c) {
+      i++
+      continue
+    }
+    // Any non-'"' byte here is stray content between members; step over it and
+    // resync on the next quote, exactly as the per-field walk did.
+    if (ch !== 0x22) {
+      i++
+      continue
+    }
+    const keyEnd = findJsonStringEnd(source, i, objectEnd)
+    if (keyEnd === -1) break // truncated key: findObjectFieldValue returned null here
+    const keyStart = i + 1
+    i = skipJsonWhitespace(source, keyEnd + 1, objectEnd)
+    if (jsonCharCodeAt(source, i) !== 0x3a) continue // missing ':' — resync on the next member
+    const value = findJsonValueBounds(source, i + 1, objectEnd)
+    if (!value) break // unparseable value: findObjectFieldValue returned null here
+    const matched = matchCapturedField(source, fieldBuffers, keyStart, keyEnd, fields)
+    if (matched !== null && captured[matched] === null) {
+      captured[matched] = value // keep the first occurrence, like findObjectFieldValue
+      remaining-- // once every field is found the rest of the object is dead weight
+    }
+    i = value.end
+  }
+  return captured
+}
+
+const LARGE_ROOT_FIELDS = ['type', 'timestamp', 'sessionId', 'cwd', 'attachment', 'message'] as const
+const LARGE_ASSISTANT_MESSAGE_FIELDS = ['model', 'usage', 'id', 'content'] as const
+
 function parseLargeJsonl(line: string | Buffer): JournalEntry | null {
   const source = createJsonSource(line)
   const rootStart = skipJsonWhitespace(source, 0)
   const rootEnd = findJsonContainerEnd(source, rootStart, 0x7b, 0x7d)
   if (rootEnd === -1) return null
   const rootLimit = rootEnd + 1
-  const type = readJsonString(source, findObjectFieldValue(source, rootStart, rootLimit, 'type'))
+  const root = extractObjectFields(source, rootStart, rootLimit, LARGE_ROOT_FIELDS)
+  const type = readJsonString(source, root['type'])
   if (!type) return null
 
   const entry: JournalEntry = { type }
-  const timestamp = readJsonString(source, findObjectFieldValue(source, rootStart, rootLimit, 'timestamp'))
-  const sessionId = readJsonString(source, findObjectFieldValue(source, rootStart, rootLimit, 'sessionId'))
-  const cwd = readJsonString(source, findObjectFieldValue(source, rootStart, rootLimit, 'cwd'))
+  const timestamp = readJsonString(source, root['timestamp'])
+  const sessionId = readJsonString(source, root['sessionId'])
+  const cwd = readJsonString(source, root['cwd'])
   if (timestamp !== undefined) entry.timestamp = timestamp
   if (sessionId !== undefined) entry.sessionId = sessionId
   if (cwd !== undefined) entry.cwd = cwd
-  const addedNames = extractLargeAddedNames(source, findObjectFieldValue(source, rootStart, rootLimit, 'attachment'))
+  const addedNames = extractLargeAddedNames(source, root['attachment'])
   if (addedNames.length > 0) {
     ;(entry as Record<string, unknown>)['attachment'] = { type: 'deferred_tools_delta', addedNames }
   }
 
+  const message = root['message']
   if (type === 'user') {
-    const message = findObjectFieldValue(source, rootStart, rootLimit, 'message')
     if (message?.kind === 'object') {
       const content = findObjectFieldValue(source, message.start, message.end, 'content')
       const text = extractLargeUserText(source, content)
@@ -475,13 +560,13 @@ function parseLargeJsonl(line: string | Buffer): JournalEntry | null {
   }
 
   if (type !== 'assistant') return entry
-  const message = findObjectFieldValue(source, rootStart, rootLimit, 'message')
   if (message?.kind !== 'object') return entry
-  const model = readJsonString(source, findObjectFieldValue(source, message.start, message.end, 'model'))
-  const usageBounds = findObjectFieldValue(source, message.start, message.end, 'usage')
+  const messageFields = extractObjectFields(source, message.start, message.end, LARGE_ASSISTANT_MESSAGE_FIELDS)
+  const model = readJsonString(source, messageFields['model'])
+  const usageBounds = messageFields['usage']
   if (!model || usageBounds?.kind !== 'object') return entry
-  const id = readJsonString(source, findObjectFieldValue(source, message.start, message.end, 'id'))
-  const contentBounds = findObjectFieldValue(source, message.start, message.end, 'content')
+  const id = readJsonString(source, messageFields['id'])
+  const contentBounds = messageFields['content']
 
   entry.message = {
     type: 'message',
