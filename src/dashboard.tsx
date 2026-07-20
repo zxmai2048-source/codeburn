@@ -7,6 +7,7 @@ import { formatCost, formatTokens, markEstimated } from './format.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { parseAllSessions, filterProjectsByDateRange, filterProjectsByName, setInteractiveScanUI } from './parser.js'
 import { findUnpricedModels, loadPricing } from './models.js'
+import { aggregateModelTotals } from './model-breakdown.js'
 import { buildDurablePeriod } from './usage-aggregator.js'
 import { getAllProviders } from './providers/index.js'
 import { scanAndDetect, type WasteFinding, type WasteAction, type OptimizeResult } from './optimize.js'
@@ -442,21 +443,10 @@ const MODEL_NAME_WIDTH = 14
 const MIN_EDIT_TURNS_FOR_RATE = 5
 
 function ModelBreakdown({ projects, pw, bw }: { projects: ProjectSummary[]; pw: number; bw: number }) {
-  const modelTotals: Record<string, { calls: number; costUSD: number; estimatedCostUSD: number; freshInput: number; cacheRead: number; cacheWrite: number }> = {}
+  // Keyed by friendly display name so mixed-vintage cache keys that resolve to
+  // the same model merge into one row (see aggregateModelTotals).
+  const modelTotals = aggregateModelTotals(projects)
   const modelEfficiency = aggregateModelEfficiency(projects)
-  for (const project of projects) {
-    for (const session of project.sessions) {
-      for (const [model, data] of Object.entries(session.modelBreakdown)) {
-        if (!modelTotals[model]) modelTotals[model] = { calls: 0, costUSD: 0, estimatedCostUSD: 0, freshInput: 0, cacheRead: 0, cacheWrite: 0 }
-        modelTotals[model].calls += data.calls
-        modelTotals[model].costUSD += data.costUSD
-        modelTotals[model].estimatedCostUSD += data.estimatedCostUSD ?? 0
-        modelTotals[model].freshInput += data.tokens.inputTokens
-        modelTotals[model].cacheRead += data.tokens.cacheReadInputTokens
-        modelTotals[model].cacheWrite += data.tokens.cacheCreationInputTokens
-      }
-    }
-  }
   const anyEstimated = Object.values(modelTotals).some(d => d.estimatedCostUSD > 0)
   const sorted = Object.entries(modelTotals).sort(([, a], [, b]) => b.costUSD - a.costUSD)
   const maxCost = sorted[0]?.[1]?.costUSD ?? 0
