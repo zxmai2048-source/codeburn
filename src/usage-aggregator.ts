@@ -9,6 +9,7 @@ import { stat } from 'node:fs/promises'
 import { aggregateProjectsIntoDays, buildPeriodDataFromDays } from './day-aggregator.js'
 import { aggregateModelEfficiency } from './model-efficiency.js'
 import { aggregateModels } from './models-report.js'
+import { scanUserCorrections, medianTimeToFirstEditMs, aggregateFileChurn, computePricingCoverage } from './workflow-insights.js'
 import { scanAndDetect } from './optimize.js'
 import { getDaysInRange, ensureCacheHydrated, loadDailyCache, emptyCache, BACKFILL_DAYS, toDateString, type DailyCache, type DailyEntry } from './daily-cache.js'
 import { buildGranularHistory } from './granular-history.js'
@@ -42,6 +43,13 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
     }
   }
 
+  const unpricedModels = findUnpricedModels(Object.entries(modelTotals)
+    .map(([model, d]) => ({ model, calls: d.calls, cost: d.cost, tokens: d.tokens })))
+  const costBearingCalls = Object.entries(modelTotals)
+    .reduce((s, [model, d]) => s + (model === '<synthetic>' ? 0 : d.calls), 0)
+  const unpricedCalls = unpricedModels.reduce((s, m) => s + m.calls, 0)
+  const corrections = scanUserCorrections(projects)
+
   return {
     label,
     cost: projects.reduce((s, p) => s + p.totalCostUSD, 0),
@@ -56,8 +64,14 @@ export function buildPeriodData(label: string, projects: ProjectSummary[]): Peri
     models: Object.entries(modelTotals)
       .sort(([, a], [, b]) => b.cost - a.cost)
       .map(([name, d]) => ({ name, calls: d.calls, cost: d.cost, savingsUSD: d.savingsUSD, estimatedCostUSD: d.estimatedCostUSD })),
-    unpricedModels: findUnpricedModels(Object.entries(modelTotals)
-      .map(([model, d]) => ({ model, calls: d.calls, cost: d.cost, tokens: d.tokens }))),
+    unpricedModels,
+    workflow: {
+      corrections: corrections.corrections,
+      correctionRate: corrections.correctionRate,
+      medianTimeToFirstEditMs: medianTimeToFirstEditMs(projects),
+    },
+    topReworkedFiles: aggregateFileChurn(projects),
+    pricingCoverage: computePricingCoverage(costBearingCalls, unpricedCalls),
   }
 }
 
@@ -305,6 +319,14 @@ export async function buildMenubarPayloadForRange(periodInfo: PeriodInfo, opts: 
       // detection, both derivable solely from surviving sessions.
       currentData.estimatedCostUSD = scanData.estimatedCostUSD
       currentData.unpricedModels = scanData.unpricedModels
+      // Workflow-intelligence metrics are session-derived by nature (they need
+      // turn text, timestamps, and tool sequences that day entries don't
+      // carry), so like the fields above they come from the scan. Note
+      // pricingCoverage therefore describes surviving-session calls, a smaller
+      // population than the carried headline cost.
+      currentData.workflow = scanData.workflow
+      currentData.topReworkedFiles = scanData.topReworkedFiles
+      currentData.pricingCoverage = scanData.pricingCoverage
       // Sessions: the cache buckets a session on its START day, the scan
       // counts it on any day it was ACTIVE. Each undercounts differently
       // (day-filtered views miss midnight-spanners; the scan misses expired
