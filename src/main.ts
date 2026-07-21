@@ -2037,8 +2037,10 @@ program
         process.stdout.write('No sessions with captured PR links in this period. Links are captured as sessions are parsed; older transcripts gain them on their next re-parse.\n')
         return
       }
-      const { cost, sessions } = prLinkedTotals(projects)
+      const { unattributedCost, sessions } = prLinkedTotals(projects)
       const { renderTable: renderTextTable } = await import('./text-table.js')
+      const modelsCell = (models: string[]): string =>
+        models.length === 0 ? '' : models.slice(0, 2).join(', ') + (models.length > 2 ? ` +${models.length - 2}` : '')
       const table = renderTextTable(
         [
           { header: 'PR' },
@@ -2046,20 +2048,28 @@ program
           { header: 'Saved', right: true },
           { header: 'Sessions', right: true },
           { header: 'Calls', right: true },
+          { header: 'Models' },
           { header: 'First' },
           { header: 'Last' },
         ],
         prRows.map(r => [
           r.label,
-          `$${r.cost.toFixed(2)}`,
+          `${r.approx ? '~' : ''}$${r.cost.toFixed(2)}`,
           `$${r.savingsUSD.toFixed(2)}`,
           String(r.sessions),
           String(r.calls),
+          modelsCell(r.models),
           r.firstStarted.slice(0, 10),
           r.lastEnded.slice(0, 10),
         ]),
       )
-      process.stdout.write(table + `\nDistinct PR-linked spend: $${cost.toFixed(2)} across ${sessions} session${sessions === 1 ? '' : 's'}. A session referencing several PRs counts toward each, so rows exceed this total when links overlap.\n`)
+      // Footer reconciles to the ROUNDED row values actually printed (not the
+      // exact float sum), so the visible column adds up to the stated total.
+      const shownAttributed = prRows.reduce((sum, r) => sum + Number(r.cost.toFixed(2)), 0)
+      const approxNote = prRows.some(r => r.approx)
+        ? ' ~ marks rows estimated from a whole-session even split (transcript expired before per-turn capture).'
+        : ''
+      process.stdout.write(table + `\nRows sum to $${shownAttributed.toFixed(2)} attributed across ${sessions} PR-linked session${sessions === 1 ? '' : 's'}. $${unattributedCost.toFixed(2)} of that spend was not tied to a specific PR.${approxNote}\n`)
       return
     }
     const rows = aggregateSessions(projects)

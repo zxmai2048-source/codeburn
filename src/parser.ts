@@ -912,6 +912,12 @@ export function compactEntry(raw: JournalEntry): JournalEntry {
   if (raw.cwd !== undefined) entry.cwd = raw.cwd
   // Preserved so groupIntoTurns can stamp each turn's git branch (rich capture).
   if (typeof raw.gitBranch === 'string' && raw.gitBranch) entry.gitBranch = raw.gitBranch
+  // Preserved so groupIntoTurns can attribute each PR reference to its turn.
+  // Only `pr-link` entries carry `prUrl`; every other field of theirs is dropped.
+  if (raw.type === 'pr-link') {
+    const prUrl = (raw as Record<string, unknown>)['prUrl']
+    if (typeof prUrl === 'string' && prUrl) (entry as Record<string, unknown>)['prUrl'] = prUrl
+  }
 
   const att = (raw as Record<string, unknown>)['attachment']
   if (att && typeof att === 'object') {
@@ -1440,6 +1446,10 @@ export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>,
   // from the user entry (gitBranch is on every user/assistant entry); a
   // continuation turn with no leading user text falls back to its first call.
   let currentBranch: string | undefined
+  // GitHub PR URLs referenced within the turn currently being accumulated. A
+  // `pr-link` entry is emitted after the assistant creates/references a PR, so it
+  // lands inside the same turn (before the next user message) and attaches here.
+  let currentPrRefs: string[] = []
 
   for (const entry of entries) {
     const entryBranch = typeof entry.gitBranch === 'string' && entry.gitBranch ? entry.gitBranch : undefined
@@ -1453,6 +1463,7 @@ export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>,
             timestamp: currentTimestamp,
             sessionId: currentSessionId,
             ...(currentBranch ? { gitBranch: currentBranch } : {}),
+            ...(currentPrRefs.length > 0 ? { prRefs: [...currentPrRefs].sort() } : {}),
           })
         }
         currentUserMessage = text
@@ -1460,6 +1471,7 @@ export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>,
         currentTimestamp = entry.timestamp ?? ''
         currentSessionId = entry.sessionId ?? ''
         currentBranch = entryBranch
+        currentPrRefs = []
       }
     } else if (entry.type === 'assistant') {
       if (entryBranch && !currentBranch) currentBranch = entryBranch
@@ -1469,6 +1481,9 @@ export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>,
       const call = parseApiCall(entry, toolResultMeta)
       if (call) currentCalls.push(call)
       for (const advisorCall of parseAdvisorCalls(entry)) currentCalls.push(advisorCall)
+    } else if (entry.type === 'pr-link') {
+      const url = (entry as Record<string, unknown>)['prUrl']
+      if (typeof url === 'string' && url && !currentPrRefs.includes(url)) currentPrRefs.push(url)
     }
   }
 
@@ -1479,6 +1494,7 @@ export function groupIntoTurns(entries: JournalEntry[], seenMsgIds: Set<string>,
       timestamp: currentTimestamp,
       sessionId: currentSessionId,
       ...(currentBranch ? { gitBranch: currentBranch } : {}),
+      ...(currentPrRefs.length > 0 ? { prRefs: [...currentPrRefs].sort() } : {}),
     })
   }
 
@@ -1841,14 +1857,19 @@ async function scanProjectDirs(
   }
   discoverProgress.finish()
 
-  if (readOnly) {
-    for (const [filePath, cached] of Object.entries(section.files)) {
-      if (allDiscoveredFiles.has(filePath)) continue
-      const dirName = cached.canonicalProjectName
-        ?? cached.turns[0]?.calls[0]?.project
-        ?? basename(dirname(filePath))
-      unchangedFiles.push({ filePath, dirName, cached })
-    }
+  // Orphans: cached sessions whose source file is no longer discovered. In
+  // read-only mode surface them all (the snapshot is authoritative, nothing is
+  // being pruned). In write mode surface only PR-bearing orphans: their transcript
+  // is gone and can never re-parse, but they carry attributable PR spend the by-PR
+  // report must keep (as a legacy even-split); the eviction below preserves the
+  // same set so `section.files` still holds them when summaries are built.
+  for (const [filePath, cached] of Object.entries(section.files)) {
+    if (allDiscoveredFiles.has(filePath)) continue
+    if (!readOnly && !cached.prLinks?.length) continue
+    const dirName = cached.canonicalProjectName
+      ?? cached.turns[0]?.calls[0]?.project
+      ?? basename(dirname(filePath))
+    unchangedFiles.push({ filePath, dirName, cached })
   }
 
   // Pre-seed dedup set from cached (unchanged) files
@@ -1907,6 +1928,10 @@ async function scanProjectDirs(
             if (!newTurns[0]!.userMessage.trim() && mergedTurns.length > 0) {
               const last = mergedTurns[mergedTurns.length - 1]!
               last.calls = mergeBoundaryCalls(last.calls, newTurns[0]!.calls)
+              // A PR referenced in the appended continuation belongs to this same
+              // turn: union its refs in so the shortcut matches a full re-parse.
+              const refs = Array.from(new Set([...(last.prRefs ?? []), ...(newTurns[0]!.prRefs ?? [])])).sort()
+              if (refs.length > 0) last.prRefs = refs
               startIdx = 1
             }
             for (let i = startIdx; i < newTurns.length; i++) mergedTurns.push(newTurns[i]!)
@@ -2008,10 +2033,12 @@ async function scanProjectDirs(
 
   if (!readOnly && dirs.length > 0) {
     for (const cachedPath of Object.keys(section.files)) {
-      if (!allDiscoveredFiles.has(cachedPath)) {
-        delete section.files[cachedPath]
-        ;(diskCache as { _dirty?: boolean })._dirty = true
-      }
+      if (allDiscoveredFiles.has(cachedPath)) continue
+      // Keep PR-bearing orphans: their transcript is gone and can never re-parse,
+      // but they carry attributable PR spend (surfaced above as a legacy split).
+      if (section.files[cachedPath]?.prLinks?.length) continue
+      delete section.files[cachedPath]
+      ;(diskCache as { _dirty?: boolean })._dirty = true
     }
   }
 
@@ -2031,8 +2058,23 @@ async function scanProjectDirs(
     // full ordered turn list) means a later date slice can drop the anchor turn
     // without the surviving turns losing their branch.
     let carriedBranch: string | undefined
+    // The PR set active going into the report range: carried across the FULL turn
+    // list, frozen the moment the first in-range turn is reached. Lets per-turn PR
+    // attribution seed from a reference made before the window (see
+    // attributeSessionPrSpend); the branch carry above solves the same problem.
+    let carriedPrRefs: string[] | undefined
+    let prRefsAtRangeStart: string[] | undefined
+    let frozePrRefs = !dateRange
     let classifiedTurns = cachedFile.turns.map(turn => {
       if (turn.gitBranch) carriedBranch = turn.gitBranch
+      if (dateRange && !frozePrRefs) {
+        const firstTs = turn.calls[0]?.timestamp
+        if (firstTs && new Date(firstTs) >= dateRange.start) {
+          prRefsAtRangeStart = carriedPrRefs
+          frozePrRefs = true
+        }
+      }
+      if (turn.prRefs?.length) carriedPrRefs = turn.prRefs
       return cachedTurnToClassified(turn, carriedBranch)
     })
     // Captured from the FULL turn list, before the date slice below can drop the
@@ -2060,6 +2102,7 @@ async function scanProjectDirs(
     session.agentType = cachedFile.agentType
     if (everHadBranch) session.everHadBranch = true
     if (cachedFile.prLinks?.length) session.prLinks = [...new Set(cachedFile.prLinks)].sort()
+    if (prRefsAtRangeStart?.length) session.prRefsAtRangeStart = prRefsAtRangeStart
     if (cachedFile.title) session.title = cachedFile.title
 
     if (session.apiCalls > 0) {
@@ -2235,6 +2278,9 @@ function parsedTurnToCachedTurn(turn: ParsedTurn): CachedTurn {
     sessionId: turn.sessionId,
     userMessage: turn.userMessage.slice(0, 2000),
     calls: turn.assistantCalls.map(apiCallToCachedCall),
+    // Stored per-turn directly (already sorted/deduped in groupIntoTurns), unlike
+    // gitBranch's change-detection dedup, so each turn's refs are self-contained.
+    ...(turn.prRefs?.length ? { prRefs: turn.prRefs } : {}),
   }
 }
 
@@ -2344,6 +2390,7 @@ function cachedTurnToClassified(turn: CachedTurn, resolvedBranch?: string): Clas
     timestamp: turn.timestamp,
     sessionId: turn.sessionId,
     ...(branch ? { gitBranch: branch } : {}),
+    ...(turn.prRefs?.length ? { prRefs: turn.prRefs } : {}),
   }
   return classifyTurn(parsed)
 }

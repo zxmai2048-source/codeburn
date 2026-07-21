@@ -43,9 +43,9 @@ export type PeriodData = {
   /// Share (0-1) of cost-bearing calls that resolved a price.
   pricingCoverage?: number
   /// Spend attributed by referenced pull request (from Claude session
-  /// transcripts). Rows are by-reference — a session referencing several PRs
-  /// counts toward EACH — so never sum them; `distinctCost`/`distinctSessions`
-  /// are the multi-link-safe total. Absent when no PR links were observed.
+  /// transcripts), at turn granularity. Rows carry attributed cost/calls and ARE
+  /// summable; `attributedCost`/`unattributedCost` split the PR-linked spend.
+  /// Absent when no PR links were observed.
   pullRequests?: PullRequestsPayload
   /// Per-branch spend, last-seen branch carried forward across each session's
   /// turns. A `null` branch is unbranched spend inside a branch-bearing session.
@@ -57,11 +57,21 @@ export type PeriodData = {
 export type PullRequestsPayload = {
   /// Per-PR rows, cost-descending, capped at the top 20 by the producer.
   rows: PrRow[]
-  /// Distinct-session spend across every PR-linked session — the figure safe to
-  /// present as a total, since the per-PR rows double-count sessions that
-  /// reference more than one PR.
+  /// Distinct-session spend across every PR-linked session. Equals
+  /// `attributedCost + unattributedCost`; kept for backward compatibility.
   distinctCost: number
   distinctSessions: number
+  /// Sum of EVERY PR's attributed cost (all rows, not just the sent top 20).
+  attributedCost: number
+  /// PR-linked spend not tied to any specific PR (pre-reference session
+  /// overhead). `attributedCost + unattributedCost === distinctCost`.
+  unattributedCost: number
+  /// Count of PRs beyond the sent `rows` (0 when nothing was capped). The app
+  /// renders an "Other (N more PRs)" summary row so the visible table still
+  /// reconciles to `attributedCost`.
+  otherPrCount: number
+  /// Attributed cost of those capped-away PRs (0 when nothing was capped).
+  otherPrCost: number
 }
 
 export type ProviderCost = {

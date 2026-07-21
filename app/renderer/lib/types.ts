@@ -220,11 +220,15 @@ export type MenubarPayload = {
     skills: Array<{ name: string; turns: number; cost: number }>
     subagents: Array<{ name: string; calls: number; cost: number }>
     mcpServers: Array<{ name: string; calls: number }>
-    // Spend by referenced pull request (top 20 by cost) plus the multi-link-safe
-    // distinct total. Optional: older CLIs omit it, and it is absent when no PR
-    // links were observed. Rows are by-reference — a session referencing several
-    // PRs counts toward each — so `rows[].cost` must never be summed; use
-    // `distinctCost`/`distinctSessions` for a total.
+    // Spend by referenced pull request (top 20 by cost), attributed at turn
+    // granularity. Optional: older CLIs omit it, and it is absent when no PR links
+    // were observed. Rows carry attributed cost/calls and ARE summable;
+    // `attributedCost + unattributedCost === distinctCost`. `approx` marks a row
+    // fed by the legacy whole-session even split (transcript expired). `models` is
+    // the short model names that processed the PR (cost-desc); `categories` is the
+    // per-task-category attributed cost (cost-desc), omitted for legacy rows.
+    // `attributedCost`/`unattributedCost` are optional so a payload from an older
+    // CLI (by-reference rows, not summable) still type-checks and can be detected.
     pullRequests?: {
       rows: Array<{
         url: string
@@ -235,9 +239,16 @@ export type MenubarPayload = {
         calls: number
         firstStarted: string
         lastEnded: string
+        approx?: boolean
+        models?: string[]
+        categories?: Array<{ name: string; cost: number }>
       }>
       distinctCost: number
       distinctSessions: number
+      attributedCost?: number
+      unattributedCost?: number
+      otherPrCount?: number
+      otherPrCost?: number
     }
   }
   optimize: {
